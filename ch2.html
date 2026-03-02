@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Turbo Time Turtle 2000 — Chapter 2</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  * { box-sizing: border-box; touch-action: none; }
+  body { margin: 0; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100dvh; overflow: hidden; }
+  #game-wrapper { position: relative; }
+  canvas { display: block; border: 2px solid #444; max-width: 100%; }
+  #touch-controls { display: none; width: 100%; max-width: 800px; background: #111; padding: 8px 16px; }
+  @media (pointer: coarse) { #touch-controls { display: flex; justify-content: space-between; align-items: center; } }
+  #dpad { display: grid; grid-template-columns: 44px 44px 44px; grid-template-rows: 44px 44px 44px; gap: 4px; }
+  .dpad-btn { background: #222; border: 2px solid #444; border-radius: 8px; color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .dpad-btn:active { background: #444; }
+  #dpad-empty { background: transparent; border: none; }
+  #btn-e { width: 80px; height: 80px; border-radius: 50%; background: #1a1a3a; border: 3px solid #7c4dff; color: #7c4dff; font-size: 22px; font-weight: bold; font-family: monospace; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; }
+  #btn-e:active { background: #2a2a5a; }
+</style>
+</head>
+<body>
+<div id="game-wrapper">
+  <canvas id="game" width="800" height="600"></canvas>
+</div>
+<div id="touch-controls">
+  <div id="dpad">
+    <div></div><div class="dpad-btn" id="btn-up">▲</div><div></div>
+    <div class="dpad-btn" id="btn-left">◀</div><div id="dpad-empty"></div><div class="dpad-btn" id="btn-right">▶</div>
+    <div></div><div class="dpad-btn" id="btn-down">▼</div><div></div>
+  </div>
+  <div id="btn-e">E</div>
+</div>
+
+<script>
+function resizeCanvas() {
+  const controls = document.getElementById('touch-controls');
+  const isMobile = window.matchMedia('(pointer: coarse)').matches;
+  const controlsH = isMobile ? (controls.offsetHeight || 120) : 0;
+  const scale = Math.min(window.innerWidth / 800, (window.innerHeight - controlsH) / 600);
+  const c = document.getElementById('game');
+  c.style.width  = Math.floor(800 * scale) + 'px';
+  c.style.height = Math.floor(600 * scale) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+</script>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+document.addEventListener('keyup',   e => { keys[e.key] = false; });
+
+function touchKey(k, d) { keys[k] = d; }
+function bindTouch(id, key) {
+  const el = document.getElementById(id); if (!el) return;
+  el.addEventListener('touchstart', e => { e.preventDefault(); touchKey(key, true);  }, { passive: false });
+  el.addEventListener('touchend',   e => { e.preventDefault(); touchKey(key, false); }, { passive: false });
+  el.addEventListener('touchcancel',e => { e.preventDefault(); touchKey(key, false); }, { passive: false });
+  el.addEventListener('mousedown', () => touchKey(key, true));
+  el.addEventListener('mouseup',   () => touchKey(key, false));
+  el.addEventListener('mouseleave',() => touchKey(key, false));
+}
+bindTouch('btn-up','ArrowUp'); bindTouch('btn-down','ArrowDown');
+bindTouch('btn-left','ArrowLeft'); bindTouch('btn-right','ArrowRight');
+bindTouch('btn-e','e');
+canvas.addEventListener('touchend', e => { e.preventDefault(); if (dialogueActive) advanceDialogue(); }, { passive: false });
+
+// ── SHARED ────────────────────────────────────────────────────
+let scene = 'title';
+let dialogueActive = false, dialogueLines = [], dialoguePage = 0, dialogueCallback = null;
+let showInteractHint = false, interactHintText = '';
+let eKeyWasDown = false;
+let ticker = 0; // global frame counter
+
+const eric   = { x: 400, y: 430, w: 24, h: 24, speed: 3 };
+const nathan = { x: 200, y: 300, w: 22, h: 22 };
+
+// ── SCENE STATE ───────────────────────────────────────────────
+// Title
+let titleBlink = 0;
+
+// Scene 1 — Home Party
+let partyDone = {};
+let partyCount = 0;
+let phonePhase = 'waiting'; // waiting | ringing | answered
+
+// Scene 2 — Nathan
+let nathanPhase = 'dialogue'; // dialogue | ready
+
+// Scene 3 — Warp
+let warpT = 0;
+
+// Scene 4 — City
+let cityPhase = 'explore'; // explore | glitch_noted | done
+let glitchT = 0;
+const flyingCars = [
+  { x:-80,y:200,w:60,h:20,spd:2.4,col:'#e53935' },
+  { x:300,y:240,w:52,h:18,spd:3.0,col:'#1e88e5' },
+  { x:820,y:175,w:58,h:20,spd:-2.5,col:'#fdd835' },
+  { x:600,y:360,w:55,h:18,spd:-2.0,col:'#43a047' },
+];
+
+// Scene 5 — Warehouse
+let whPhase = 'intro'; // intro | rps | rps_result | testing | done
+let rpsMyChoice = null;
+let rpsNatChoice = null;
+let rpsResult = null;
+let rpsT = 0;
+let testedEric = false, testedNathan = false;
+
+// Scene 6 — Search / Reveal
+let searchPhase = 'walk'; // walk | taps | reveal
+let tapT = 0, tapCount = 0, tapFlash = 0;
+
+// Scene 7 — Battle
+let battlePhase = 'fight'; // fight | lost
+let ericHP = 100, lordHP = 100;
+let battleMash = 0;
+let hitFlash = 0;
+let lordAtkT = 80;
+let battleT = 0;
+
+// Scene 8 — Dusty Bark
+let barkPhase = 'grow'; // grow | bark | suck | done
+let barkT = 0;
+let dustySize = 1;
+let holeR = 0;
+let suckX = 600;
+
+// Scene 9 — Home End / Certificate
+let certPhase = 'show'; // show | pizza
+let certAlpha = 0;
+let certT = 0;
+
+// Scene 10 — Epilogue 2
+let ep2Phase = 'dark'; // dark | watcher | text | end
+let ep2T = 0;
+let watcherAlpha = 0;
+let ep2TextAlpha = 0;
+
+// ── LAYOUT CONSTANTS ─────────────────────────────────────────
+const boombox  = { x:100, y:160, w:52, h:32 };
+const skate    = { x:680, y:200, w:44, h:16 };
+const tub      = { x:310, y:110, w:80, h:56 };
+const junkfood = { x:540, y:370, w:56, h:44 };
+const phoneObj = { x:200, y:420, w:30, h:36 };
+const couch    = { x:80,  y:380, w:130, h:52 };
+const tableObj = { x:330, y:430, w:100, h:42 };
+
+const glitchMan     = { x:590, y:270, w:26, h:40 };
+const warehouseSign = { x:620, y:80,  w:140, h:200 };
+
+const bag1 = { x:200, y:260, w:50, h:90 };
+const bag2 = { x:450, y:260, w:50, h:90 };
+const dustyObj = { x:680, y:380, w:28, h:22 };
+
+const lordPos  = { x:560, y:240, w:28, h:40 };
+const benCap   = { x:540, y:300, w:22, h:32 };
+
+const city2Buildings = [
+  {x:0,  y:0,  w:110,h:190},{x:160,y:0,  w:90, h:150},{x:330,y:0,  w:120,h:170},
+  {x:540,y:0,  w:110,h:180},{x:690,y:0,  w:110,h:160},
+  {x:0,  y:430,w:120,h:170},{x:190,y:460,w:100,h:140},{x:380,y:450,w:110,h:150},
+];
+const wh2Crates = [
+  {x:60, y:60, w:70,h:70},{x:180,y:60, w:60,h:60},{x:300,y:60, w:70,h:70},
+  {x:450,y:60, w:60,h:60},{x:580,y:50, w:80,h:80},{x:680,y:60, w:80,h:70},
+  {x:60, y:380,w:70,h:70},{x:190,y:410,w:60,h:60},{x:440,y:390,w:70,h:70},
+];
+
+// ── HELPERS ───────────────────────────────────────────────────
+function showDialogue(lines, cb) {
+  dialogueLines = lines; dialoguePage = 0;
+  dialogueActive = true; dialogueCallback = cb || null;
+}
+function advanceDialogue() {
+  dialoguePage++;
+  if (dialoguePage >= dialogueLines.length) {
+    dialogueActive = false;
+    const cb = dialogueCallback; dialogueCallback = null;
+    if (cb) cb();
+  }
+}
+function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+function nearRect(a, b, d) {
+  return dist(a.x + a.w/2, a.y + a.h/2, b.x + b.w/2, b.y + b.h/2) < d;
+}
+function collides(ax,ay,aw,ah,bx,by,bw,bh) {
+  return ax<bx+bw && ax+aw>bx && ay<by+bh && ay+ah>by;
+}
+function moveEric(obs) {
+  let dx=0, dy=0;
+  if (keys['ArrowLeft'] ||keys['a']||keys['A']) dx=-eric.speed;
+  if (keys['ArrowRight']||keys['d']||keys['D']) dx= eric.speed;
+  if (keys['ArrowUp']   ||keys['w']||keys['W']) dy=-eric.speed;
+  if (keys['ArrowDown'] ||keys['s']||keys['S']) dy= eric.speed;
+  let nx=Math.max(0,Math.min(800-eric.w,eric.x+dx));
+  let ny=Math.max(36,Math.min(560-eric.h,eric.y+dy));
+  for (const o of obs) { if(collides(nx,eric.y,eric.w,eric.h,o.x,o.y,o.w,o.h)) nx=eric.x; }
+  for (const o of obs) { if(collides(eric.x,ny,eric.w,eric.h,o.x,o.y,o.w,o.h)) ny=eric.y; }
+  eric.x=nx; eric.y=ny;
+}
+// Deterministic window helper — avoids per-frame Math.random()
+function winRand(seed) { return ((seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; }
+
+// ── UPDATE ────────────────────────────────────────────────────
+function update() {
+  ticker++;
+  if (dialogueActive) {
+    const eDown = keys['e']||keys['E']||keys[' '];
+    if (eDown && !eKeyWasDown) advanceDialogue();
+    eKeyWasDown = eDown; return;
+  }
+  eKeyWasDown = false;
+  if (scene==='title')     updateTitle();
+  if (scene==='home')      updateHome();
+  if (scene==='nathan')    updateNathan();
+  if (scene==='warp')      updateWarp();
+  if (scene==='city')      updateCity();
+  if (scene==='warehouse') updateWarehouse();
+  if (scene==='search')    updateSearch();
+  if (scene==='battle')    updateBattle();
+  if (scene==='bark')      updateBark();
+  if (scene==='homeend')   updateHomeEnd();
+  if (scene==='epilogue')  updateEpilogue();
+}
+
+// Title
+function updateTitle() {
+  titleBlink++;
+  if ((keys['e']||keys['E']||keys[' ']) && !eKeyWasDown) {
+    eKeyWasDown = true; startHome();
+  }
+}
+
+function startHome() {
+  scene = 'home';
+  partyDone = { boombox:false, skate:false, bath:false, junk:false };
+  partyCount = 0; phonePhase = 'waiting';
+  eric.x = 400; eric.y = 430;
+  showDialogue([
+    'RECAP: Eric rescued his dad Ben from Lord Time in 3099.',
+    'Lord Time was destroyed by the EDM — or so they thought...',
+    '"Okay, Eric. I have to go back to 3099." said Ben.',
+    '"But why???" "You can\'t come to work with me, son."',
+    '"I\'ll be home at 6:30. Bye!" "Bye..."',
+    'Ben leaped into the Turbo Time Turtle 2000 — and was gone.',
+    '"Well," said Eric. "It\'s time to get this party started!"',
+    '[ Explore the house — interact with 4 things! Arrow/WASD + E ]',
+  ]);
+}
+
+// Scene 1 — Home
+function updateHome() {
+  moveEric([couch, tableObj]);
+  showInteractHint = false;
+
+  if (phonePhase === 'waiting') {
+    const items = [
+      { obj:boombox,  key:'boombox', hint:'Press E: Play boombox!',
+        lines:['Eric cranked up the boombox and jammed to Bruno Mars!','♪ Just the way you are ♫','...Uptown Funk ♫','...24K Magic ♫'] },
+      { obj:skate,    key:'skate',   hint:'Press E: Skateboard!',
+        lines:['Eric started skateboarding in the house!','WHEEE!!!','He ollied over the couch. Twice.'] },
+      { obj:tub,      key:'bath',    hint:'Press E: Bubble bath!',
+        lines:['Eric took a fun bubble bath!','He gave himself SEVENTEEN bubble beards.','And a bubble top hat.','And a bubble moustache.'] },
+      { obj:junkfood, key:'junk',    hint:'Press E: Eat junk food!',
+        lines:['Eric ate a bunch of junk food!','Chips, cookies, candy, soda, more chips...','...and then he found a hidden stash of gummies.'] },
+    ];
+    for (const item of items) {
+      if (!partyDone[item.key] && nearRect(eric, item.obj, 64)) {
+        showInteractHint = true; interactHintText = item.hint;
+        const eDown = keys['e']||keys['E'];
+        if (eDown && !eKeyWasDown) {
+          eKeyWasDown = true;
+          showDialogue(item.lines, () => {
+            partyDone[item.key] = true; partyCount++;
+            if (partyCount === 4) {
+              showDialogue([
+                'Eric partied ALL afternoon.',
+                'Just then — {Bring! Bring!} the phone rang!',
+                'VRRR!!! Wait, that\'s the vacuum. Eric was already cleaning.',
+                '"(Sigh.) I learned that the hard way." Eric smirked at the narrator.',
+                'Fortunately Eric was a REALLY fast cleaner.',
+                'His dad had no idea. But now — the phone is ringing!',
+                '[ Walk to the phone and press E to answer! ]',
+              ]);
+              phonePhase = 'ringing';
+            }
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  if (phonePhase === 'ringing' && nearRect(eric, phoneObj, 64)) {
+    showInteractHint = true; interactHintText = 'Press E: Answer the phone!';
+    const eDown = keys['e']||keys['E'];
+    if (eDown && !eKeyWasDown) {
+      eKeyWasDown = true; phonePhase = 'answered';
+      showDialogue([
+        '[Hello? Eric? Ah, here you are!]',
+        '"Hi, Dad."',
+        '[It\'s 6:25. I\'ll be home soon!] "Oh. Okay, bye." [Bye.] Click!',
+        'Eric waited. And waited. It was 6:30.',
+        'Nothing happened.',
+        '"He probably went to get snacks from a different time." said Eric.',
+        '...Still nothing. Five minutes. Ten. An hour.',
+        '"That\'s weird. Dad\'s always fast at shopping." said Eric, sweating.',
+        '...Another hour. Zilch.',
+        '"This is not good," said Eric. "This is not good AT ALL."',
+        'Just then — a kid appeared out of NOWHERE!',
+      ], () => { startNathan(); });
+    }
+  }
+}
+
+// Scene 2 — Nathan
+function startNathan() {
+  scene = 'nathan'; nathanPhase = 'dialogue';
+  nathan.x = 580; nathan.y = 320;
+  eric.x = 200; eric.y = 340;
+  showDialogue([
+    '"You can borrow my time watch." said the kid.',
+    '"W-who are you?" said Eric.',
+    '"I am Nathan." said Nathan.',
+    '"Your dad\'s partner — only kid who works with The Time Squad..."',
+    '"...and the person who sent you that note." (*See Chapter 1)',
+    '"Ohh! So you\'re the one who gave me the note." "Yep!"',
+    '"I\'m also kind of bad at my job."',
+    '"What do you mean?" said Eric.',
+    '"Well... I\'m supposed to be cleaning EDMs right about now."',
+    '"Yikes." said Eric.',
+    '"Anyway! Enough small talk — we\'re going to save Ben!"',
+    '[ Walk to Nathan and press E to use the time watch! ]',
+  ], () => { nathanPhase = 'ready'; });
+}
+
+function updateNathan() {
+  moveEric([]);
+  showInteractHint = false;
+  if (nathanPhase === 'ready' && nearRect(eric, nathan, 70)) {
+    showInteractHint = true; interactHintText = 'Press E: Use the time watch!';
+    const eDown = keys['e']||keys['E'];
+    if (eDown && !eKeyWasDown) {
+      eKeyWasDown = true;
+      showDialogue([
+        'They looked at the time watch and entered 3-0-9-9.',
+        'Nathan hit the GO selection.',
+        'Energy started swirling around their bodies!',
+        '"I\'m jealous." said Eric. "This is way better than bananas."',
+        '"What. Ha ha." said Nathan.',
+        '"It doesn\'t let you EAT properly," said Eric.',
+        '...There was a flash of light, and they were gone.',
+      ], () => { startWarp(); });
+    }
+  }
+}
+
+// Scene 3 — Warp
+function startWarp() {
+  scene = 'warp'; warpT = 0;
+}
+function updateWarp() {
+  warpT++;
+  if (warpT > 210) startCity();
+}
+
+// Scene 4 — City 3099
+function startCity() {
+  scene = 'city'; cityPhase = 'explore'; glitchT = 0;
+  eric.x = 140; eric.y = 340;
+  nathan.x = 200; nathan.y = 350;
+  showDialogue([
+    'They landed in 3099!',
+    '"Wow." said Eric. "That was weird."',
+    '"Yep. If you tried talking while travelling, you\'d say silly things."',
+    '"I know," said Eric. "(Sigh.) Learned that the hard way."',
+    '"Now let\'s find your dad! He was in the warehouse last time."',
+    'On the way they saw spilled paint, spilled milk, and spilled beans.',
+    'And... a man in a trench coat and sunglasses.',
+    '[ Head to the WAREHOUSE entrance (top right). Watch the glitching man! ]',
+  ]);
+}
+
+function updateCity() {
+  for (const car of flyingCars) {
+    car.x += car.spd;
+    if (car.spd>0 && car.x>860) car.x=-80;
+    if (car.spd<0 && car.x<-80) car.x=860;
+  }
+  moveEric(city2Buildings);
+  nathan.x += (eric.x - 40 - nathan.x) * 0.08;
+  nathan.y += (eric.y - nathan.y) * 0.08;
+  showInteractHint = false;
+  glitchT++;
+
+  // Glitch man interaction (only if Eric is close, not Nathan)
+  const ericNearGlitch = nearRect(eric, glitchMan, 90);
+  if (cityPhase === 'explore' && ericNearGlitch && glitchT > 80) {
+    showInteractHint = true; interactHintText = 'Press E: That man is glitching!';
+    const eDown = keys['e']||keys['E'];
+    if (eDown && !eKeyWasDown) {
+      eKeyWasDown = true; cityPhase = 'glitch_noted';
+      showDialogue([
+        '"Something seems suspicious about that guy." said Eric.',
+        '"What do you mean?" said Nathan.',
+        '"He\'s glitching — like an old video game!"',
+        '...The man stopped glitching the moment Nathan looked.',
+        '"I don\'t see anything." said Nathan.',
+        '"Maybe it was just your imagination." suggested Nathan.',
+        '"But I swear I... (Sigh.) Whatever. Let\'s keep moving."',
+        '[ Head to the WAREHOUSE entrance — top right! ]',
+      ]);
+    }
+  }
+
+  // Warehouse entrance
+  if (nearRect(eric, {x:warehouseSign.x+warehouseSign.w/2,y:warehouseSign.y+60,w:1,h:1}, 90)) {
+    showInteractHint = true; interactHintText = 'Press E: Enter warehouse';
+    const eDown = keys['e']||keys['E'];
+    if (eDown && !eKeyWasDown) {
+      eKeyWasDown = true; startWarehouse();
+    }
+  }
+}
+
+// Scene 5 — Warehouse
+function startWarehouse() {
+  scene = 'warehouse'; whPhase = 'intro';
+  eric.x = 400; eric.y = 420;
+  nathan.x = 350; nathan.y = 430;
+  showDialogue([
+    'They went inside the warehouse.',
+    'The lights were off. Everything was still.',
+    'Just then... "Grr..." — a quiet noise from behind!',
+    '"AHHH!!!" screamed the boys. "IT\'S A MONSTER!!!"',
+    '...They turned around only to see...',
+    '...A small dog?',
+    '"Dusty!" said Nathan. "Aren\'t you supposed to be at home?!"',
+    '"Who is this pooch?!" said Eric, relieved.',
+    '"This is Dusty — my pet dog." Dusty was holding... WEAPONS!!!',
+    '"He has... nunchucks? And a pickle?"',
+    '"Those are not cool at all." said Eric.',
+    '"Rock paper scissors — whoever LOSES gets the pickle!"',
+    '[ Press 1 = Rock, 2 = Paper, 3 = Scissors ]',
+  ], () => { whPhase = 'rps'; });
+}
+
+function updateWarehouse() {
+  if (whPhase === 'rps') {
+    let choice = null;
+    if (keys['1']) choice = 'rock';
+    else if (keys['2']) choice = 'paper';
+    else if (keys['3']) choice = 'scissors';
+    if (choice && !eKeyWasDown) {
+      eKeyWasDown = true;
+      rpsMyChoice = choice;
+      const opts = ['rock','paper','scissors'];
+      rpsNatChoice = opts[Math.floor(Math.random() * 3)];
+      if (rpsMyChoice === rpsNatChoice) {
+        rpsResult = 'tie';
+      } else if (
+        (rpsMyChoice==='rock'&&rpsNatChoice==='scissors') ||
+        (rpsMyChoice==='paper'&&rpsNatChoice==='rock') ||
+        (rpsMyChoice==='scissors'&&rpsNatChoice==='paper')
+      ) { rpsResult = 'win'; } else { rpsResult = 'lose'; }
+      whPhase = 'rps_result'; rpsT = 0;
+    }
+    return;
+  }
+  if (whPhase === 'rps_result') {
+    rpsT++;
+    if (rpsT > 60 && (keys['e']||keys['E']||keys[' ']) && !eKeyWasDown) {
+      eKeyWasDown = true;
+      const resultLine = rpsResult === 'win'  ? '"Nice one!" said Nathan. He took the pickle with a sigh.' :
+                         rpsResult === 'lose' ? '"What?!" said Nathan. "(Sigh.) Okay... I get the pickle."' :
+                                               'It was a tie! They played again... Nathan lost again.';
+      showDialogue([
+        resultLine,
+        '"Okay." said Eric. "Let\'s test these things."',
+        'They got two BIG punching bags.',
+        '[ Press E near YOUR bag (left) then E near NATHAN\'s bag (right) ]',
+      ], () => { whPhase = 'testing'; testedEric = false; testedNathan = false; });
+    }
+    return;
+  }
+  if (whPhase === 'testing') {
+    moveEric([]);
+    showInteractHint = false;
+    if (!testedEric && nearRect(eric, bag1, 70)) {
+      showInteractHint = true; interactHintText = 'Press E: Test nunchucks!';
+      const eDown = keys['e']||keys['E'];
+      if (eDown && !eKeyWasDown) {
+        eKeyWasDown = true; testedEric = true;
+        showDialogue([
+          'Swish swish! Zzzz!',
+          '"Whoa!" said Eric.',
+          'Eric beat the punching bag in an instant. The nunchucks crackled with energy!',
+        ], checkWeaponsDone);
+      }
+    }
+    if (!testedNathan && nearRect(eric, bag2, 70)) {
+      showInteractHint = true; interactHintText = 'Press E: Watch Nathan test pickle!';
+      const eDown = keys['e']||keys['E'];
+      if (eDown && !eKeyWasDown) {
+        eKeyWasDown = true; testedNathan = true;
+        showDialogue([
+          'Smack! Rip!',
+          'Nathan\'s pickle went sharp and SLICED the punching bag clean through!',
+          '"Cool!" said Nathan. "But overall, you got the cooler weapon."',
+          '"Okay," said Eric. "Now let\'s go find my dad!"',
+        ], checkWeaponsDone);
+      }
+    }
+    return;
+  }
+  if (whPhase === 'done') {
+    showInteractHint = true; interactHintText = 'Press E: Leave warehouse';
+    const eDown = keys['e']||keys['E'];
+    if (eDown && !eKeyWasDown) { eKeyWasDown = true; startSearch(); }
+  }
+}
+
+function checkWeaponsDone() {
+  if (testedEric && testedNathan) { whPhase = 'done'; }
+}
+
+// Scene 6 — Search / Reveal
+function startSearch() {
+  scene = 'search'; searchPhase = 'walk';
+  tapT = 0; tapCount = 0; tapFlash = 0;
+  eric.x = 200; eric.y = 350;
+  nathan.x = 260; nathan.y = 360;
+  showDialogue([
+    'Eric and Nathan went back out and kept on searching.',
+    '"Hmm... if I were Dad, where would I go?" said Eric.',
+    'Suddenly, they felt something tap on their shoulders!',
+    'They looked — nobody was there.',
+    '"WHAT WAS THAT?!" said Eric.',
+    '"It\'s probably our imaginations." said Nathan.',
+    '"Probably" wasn\'t the word Eric wanted to hear.',
+    '[ Walk around — something is tapping you! ]',
+  ], () => { searchPhase = 'taps'; });
+}
+
+function updateSearch() {
+  moveEric([]);
+  nathan.x += (eric.x - 40 - nathan.x) * 0.06;
+  nathan.y += (eric.y - nathan.y) * 0.06;
+  if (tapFlash > 0) tapFlash--;
+  if (searchPhase === 'taps') {
+    tapT++;
+    if (tapT % 100 === 0 && tapCount < 5) {
+      tapCount++; tapFlash = 25;
+    }
+    if (tapCount >= 5) {
+      searchPhase = 'reveal';
+      showDialogue([
+        '"Wait a minute!" said Eric.',
+        'GASP! ...It was LORD TIME! Carrying an axe!',
+        'And a bruised, battered, tied-up, tape-on-mouthed BEN!',
+        '"But how???" said Eric. "You\'re supposed to be dead!"',
+        '"I had the EDM inside my scepter. I flipped it upside down."',
+        '"Instead of destroying me, it REGENERATED me — with NEW powers!"',
+        '"Sadly the scepter was destroyed after. Oh, and one more thing..."',
+        '"I was the glitching man you saw earlier."',
+        '"WAIT WHAT?!" said Nathan. "I was WRONG?!"',
+        '"HA! \'It was just your imagination!\'" mocked Eric.',
+        '"Anyway." said Lord Time. "You\'re just in time to see the death of Ben!"',
+        '"Not if we can help it!" said our heroes.',
+        'They pulled out their weapons — FIGHT!!!',
+      ], () => { startBattle(); });
+    }
+  }
+}
+
+// Scene 7 — Battle
+function startBattle() {
+  scene = 'battle'; battlePhase = 'fight';
+  ericHP = 100; lordHP = 100; battleMash = 0;
+  hitFlash = 0; lordAtkT = 80; battleT = 0;
+  showDialogue([
+    'BATTLE! Mash E rapidly to attack Lord Time!',
+    'Watch your HP — Lord Time hits hard!',
+    '[ Mash E to attack! ]',
+  ]);
+}
+
+function updateBattle() {
+  battleT++;
+  if (hitFlash > 0) hitFlash--;
+  if (battlePhase !== 'fight') return;
+
+  // Eric attacks
+  const eDown = keys['e']||keys['E'];
+  if (eDown && !eKeyWasDown) {
+    battleMash++;
+    lordHP = Math.max(20, lordHP - 7); // can't kill Lord Time — he's too powerful
+    hitFlash = 6;
+    eKeyWasDown = true;
+  }
+
+  // Lord Time attacks periodically
+  lordAtkT--;
+  if (lordAtkT <= 0) {
+    ericHP = Math.max(0, ericHP - 12);
+    lordAtkT = Math.max(25, 80 - Math.floor(battleT / 8));
+    hitFlash = 10;
+  }
+
+  if (ericHP <= 0 || battleT > 500) {
+    battlePhase = 'lost';
+    showDialogue([
+      'Our heroes fought hard!',
+      'But Lord Time was too powerful — they lost the battle.',
+      '"What are we going to do?" said Eric.',
+      '"Don\'t worry," said Nathan. "I have an idea!"',
+      'Nathan whistled... silently.',
+      'The whistle made no sound at all.',
+      'And then — "Dusty! Want to practice your new trick?"',
+      '"Now is NOT the time for tricks, Nathan!" said Eric.',
+      '"Just. Watch." said Nathan.',
+    ], () => { startBark(); });
+  }
+}
+
+// Scene 8 — Dusty Super Bark
+function startBark() {
+  scene = 'bark'; barkPhase = 'grow';
+  barkT = 0; dustySize = 1; holeR = 0; suckX = 600;
+}
+
+function updateBark() {
+  barkT++;
+  if (barkPhase === 'grow') {
+    dustySize = 1 + barkT / 50;
+    if (barkT > 90) {
+      barkPhase = 'bark'; barkT = 0;
+      showDialogue([
+        '"Okay Dusty, Super..."',
+        'Dusty began to RISE in the air — getting BIGGER!',
+        '"...Bark!" finished Nathan.',
+        'Dusty barked SO HARD it opened a MINI BLACK HOLE!',
+        'Sucking all the matter where Lord Time was standing!',
+      ], () => { barkPhase = 'suck'; barkT = 0; });
+    }
+  }
+  if (barkPhase === 'suck') {
+    holeR = Math.min(160, barkT * 2.5);
+    suckX = 600 - barkT * 4;
+    if (barkT > 90) {
+      showDialogue([
+        'Lord Time dropped the axe! Dropped Ben! And got SUCKED IN!',
+        '"HOORAY!!!" shouted our heroes.',
+        'They quickly untied Ben.',
+        'On the way home, Ben had something to say to Eric...',
+        '"You know how I said you can\'t work in The Time Squad?"',
+        '"Yeah." said Eric.',
+        '"Well, you\'ve saved me TWICE. You are a true hero, son."',
+        '"So..." Ben reached into his pocket and pulled out a piece of paper.',
+        '"...Congratulations."',
+      ], () => { startHomeEnd(); });
+    }
+  }
+}
+
+// Scene 9 — Home End
+function startHomeEnd() {
+  scene = 'homeend'; certPhase = 'show';
+  certAlpha = 0; certT = 0;
+  eric.x = 300; eric.y = 420;
+}
+
+function updateHomeEnd() {
+  certT++;
+  certAlpha = Math.min(1, certT / 80);
+  if (certPhase === 'show' && certT > 140 && (keys['e']||keys['E']||keys[' ']) && !eKeyWasDown) {
+    eKeyWasDown = true; certPhase = 'pizza';
+    showDialogue([
+      '"Wow!" said Eric. "Thank you, Dad!"',
+      '"Anytime." said Ben.',
+      'When they reached home, Eric told Nathan the news.',
+      '"Now," said Ben, "who\'s ready for dinner?"',
+      '"What\'s for dinner?" "Pizza AND ice cream!"',
+      '"HOORAY!!!"',
+      '',
+      '— NOT The End —',
+      '',
+      '[ Press E to continue to the epilogue... ]',
+    ], () => { startEpilogue2(); });
+  }
+}
+
+// Scene 10 — Epilogue
+function startEpilogue2() {
+  scene = 'epilogue'; ep2Phase = 'dark';
+  ep2T = 0; watcherAlpha = 0; ep2TextAlpha = 0;
+}
+
+function updateEpilogue() {
+  ep2T++;
+  if (ep2Phase === 'dark'    && ep2T > 100) { ep2Phase = 'watcher'; ep2T = 0; }
+  if (ep2Phase === 'watcher') {
+    watcherAlpha = Math.min(0.85, ep2T / 80);
+    if (ep2T > 120) { ep2Phase = 'text'; ep2T = 0; }
+  }
+  if (ep2Phase === 'text') {
+    ep2TextAlpha = Math.min(1, ep2T / 80);
+    if (ep2T > 300 && (keys['e']||keys['E']||keys[' ']) && !eKeyWasDown) {
+      eKeyWasDown = true; ep2Phase = 'end';
+    }
+  }
+}
+
+// ── DRAW ─────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, 800, 600);
+  if (scene==='title')     drawTitle();
+  if (scene==='home')      drawHome();
+  if (scene==='nathan')    drawNathanScene();
+  if (scene==='warp')      drawWarp();
+  if (scene==='city')      drawCity();
+  if (scene==='warehouse') drawWarehouse();
+  if (scene==='search')    drawSearch();
+  if (scene==='battle')    drawBattle();
+  if (scene==='bark')      drawBark();
+  if (scene==='homeend')   drawHomeEnd();
+  if (scene==='epilogue')  drawEpilogue();
+  drawDialogue();
+  drawHint();
+}
+
+// ── DRAW HELPERS ──────────────────────────────────────────────
+function drawEric(x, y, w, h) {
+  w = w||24; h = h||24;
+  ctx.fillStyle = '#1565c0'; ctx.fillRect(x, y+h*0.35, w, h*0.4);
+  ctx.fillStyle = '#5d4037'; ctx.fillRect(x, y+h*0.7, w*0.45, h*0.3); ctx.fillRect(x+w*0.55, y+h*0.7, w*0.45, h*0.3);
+  ctx.fillStyle = '#ffcc80'; ctx.beginPath(); ctx.arc(x+w/2, y+h*0.2, h*0.22, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#4e342e'; ctx.fillRect(x+2, y, w-4, h*0.14);
+}
+function drawNathanAt(x, y) {
+  const w=22, h=22;
+  ctx.fillStyle = '#2e7d32'; ctx.fillRect(x, y+h*0.35, w, h*0.4);
+  ctx.fillStyle = '#37474f'; ctx.fillRect(x, y+h*0.7, w*0.45, h*0.3); ctx.fillRect(x+w*0.55, y+h*0.7, w*0.45, h*0.3);
+  ctx.fillStyle = '#ffcc80'; ctx.beginPath(); ctx.arc(x+w/2, y+h*0.2, h*0.22, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#f9a825'; ctx.fillRect(x+2, y, w-4, h*0.13);
+}
+function drawDusty(x, y, sz) {
+  sz = sz||1;
+  const w=28*sz, h=22*sz;
+  ctx.fillStyle = '#a1887f';
+  ctx.fillRect(x, y, w*0.65, h*0.65);
+  ctx.fillRect(x+w*0.6, y-h*0.22, w*0.4, h*0.55);
+  ctx.fillRect(x+w*0.68, y-h*0.45, w*0.11, h*0.28);
+  ctx.fillRect(x+w*0.85, y-h*0.45, w*0.11, h*0.28);
+  ctx.fillStyle = '#795548';
+  ctx.fillRect(x+w*0.05, y+h*0.62, w*0.12, h*0.44);
+  ctx.fillRect(x+w*0.22, y+h*0.62, w*0.12, h*0.44);
+  ctx.fillRect(x+w*0.4,  y+h*0.62, w*0.12, h*0.44);
+  ctx.fillRect(x+w*0.56, y+h*0.62, w*0.12, h*0.44);
+  ctx.fillStyle = '#e8d5b7'; ctx.beginPath(); ctx.arc(x+w*0.75, y+h*0.1, h*0.12, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#333';    ctx.beginPath(); ctx.arc(x+w*0.75, y+h*0.1, h*0.05, 0, Math.PI*2); ctx.fill();
+}
+function drawLordTime(x, y, glitch) {
+  if (glitch && Math.random()<0.35) return;
+  ctx.fillStyle = '#4a0080'; ctx.fillRect(x, y+10, 28, 30);
+  ctx.fillStyle = '#e0c07a'; ctx.beginPath(); ctx.arc(x+14, y+7, 10, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffd700';
+  ctx.fillRect(x+4, y-2, 20, 6); ctx.fillRect(x+4, y-8, 4, 8); ctx.fillRect(x+12, y-11, 4, 10); ctx.fillRect(x+20, y-8, 4, 8);
+  ctx.fillStyle = '#888'; ctx.fillRect(x+29, y+4, 4, 26); ctx.fillRect(x+25, y, 12, 10);
+}
+function drawBen(x, y) {
+  ctx.fillStyle = '#1a237e'; ctx.fillRect(x, y+10, 24, 26);
+  ctx.fillStyle = '#5d4037'; ctx.fillRect(x, y+32, 11, 14); ctx.fillRect(x+13, y+32, 11, 14);
+  ctx.fillStyle = '#ffcc80'; ctx.beginPath(); ctx.arc(x+12, y+6, 10, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#546e7a'; ctx.fillRect(x+2, y-4, 20, 10);
+}
+
+function drawRoom() {
+  ctx.fillStyle = '#f0e0c8'; ctx.fillRect(0, 0, 800, 600);
+  ctx.fillStyle = '#d4a87a'; ctx.fillRect(0, 490, 800, 110);
+  ctx.fillStyle = '#c0906a'; ctx.fillRect(0, 0, 800, 70);
+  ctx.fillStyle = '#87ceeb'; ctx.fillRect(600, 15, 130, 90);
+  ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 4; ctx.strokeRect(600, 15, 130, 90);
+  ctx.beginPath(); ctx.moveTo(665, 15); ctx.lineTo(665, 105); ctx.moveTo(600, 60); ctx.lineTo(730, 60); ctx.stroke();
+  ctx.fillStyle = '#8b4513'; ctx.fillRect(50, 290, 80, 200);
+  ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(120, 390, 7, 0, Math.PI*2); ctx.fill();
+}
+function drawCouch() {
+  ctx.fillStyle = '#8b0000'; ctx.fillRect(couch.x, couch.y, couch.w, couch.h);
+  ctx.fillStyle = '#a00000'; ctx.fillRect(couch.x, couch.y, couch.w, 14); ctx.fillRect(couch.x, couch.y, 14, couch.h); ctx.fillRect(couch.x+couch.w-14, couch.y, 14, couch.h);
+  ctx.fillStyle = '#5d4037'; ctx.fillRect(tableObj.x, tableObj.y, tableObj.w, tableObj.h);
+}
+function drawBuildings(arr, tint) {
+  arr.forEach((b, i) => {
+    ctx.fillStyle = tint[i % tint.length]; ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = '#ffd740';
+    let s = b.x*31 + b.y*17;
+    for (let wy = b.y+10; wy < b.y+b.h-10; wy += 18) {
+      for (let wx = b.x+8; wx < b.x+b.w-8; wx += 16) {
+        s = (s*1103515245+12345)&0x7fffffff;
+        if (s%3 !== 0) ctx.fillRect(wx, wy, 8, 10);
+      }
+    }
+  });
+}
+
+// ── DRAW SCENES ───────────────────────────────────────────────
+function drawTitle() {
+  ctx.fillStyle = '#000011'; ctx.fillRect(0, 0, 800, 600);
+  ctx.fillStyle = '#fff';
+  for (let i=0; i<80; i++) {
+    const sx=(i*137+50)%800, sy=(i*97+30)%600;
+    ctx.fillRect(sx, sy, 1+(i%4===0?1:0), 1+(i%4===0?1:0));
+  }
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#7c4dff'; ctx.font = 'bold 44px monospace'; ctx.fillText('TURBO TIME TURTLE 2000', 400, 150);
+  ctx.fillStyle = '#00e676'; ctx.font = 'bold 30px monospace'; ctx.fillText('Chapter 2', 400, 205);
+  ctx.fillStyle = '#ffd700'; ctx.font = '20px monospace'; ctx.fillText('The Time Squad Strikes Back', 400, 248);
+  ctx.fillStyle = '#aaa'; ctx.font = '15px monospace'; ctx.fillText('A story by Samarth Thakkar', 400, 290);
+  ctx.fillStyle = '#666'; ctx.font = '13px monospace'; ctx.fillText('CONTROLS: Arrow/WASD to move, E to interact', 400, 360);
+  ctx.fillStyle = '#fff'; ctx.font = '16px monospace';
+  if (Math.floor(ticker/15)%2===0) ctx.fillText('Press E or Space to Start', 400, 420);
+  ctx.textAlign = 'left';
+}
+
+function drawHome() {
+  drawRoom(); drawCouch();
+  // Boombox
+  ctx.fillStyle = '#212121'; ctx.fillRect(boombox.x, boombox.y, boombox.w, boombox.h);
+  ctx.fillStyle = partyDone.boombox ? '#00e676' : '#4caf50';
+  ctx.beginPath(); ctx.arc(boombox.x+14, boombox.y+16, 10, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(boombox.x+38, boombox.y+16, 10, 0, Math.PI*2); ctx.fill();
+  if (partyDone.boombox) { ctx.fillStyle='#fff'; ctx.font='14px monospace'; ctx.fillText('♪♫', boombox.x+54, boombox.y+18); }
+  // Skateboard
+  ctx.fillStyle = partyDone.skate ? '#aaa' : '#ff6f00';
+  ctx.fillRect(skate.x, skate.y, skate.w, skate.h);
+  ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(skate.x+8,skate.y+16,6,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(skate.x+36,skate.y+16,6,0,Math.PI*2); ctx.fill();
+  // Tub
+  ctx.fillStyle = '#e3f2fd'; ctx.fillRect(tub.x, tub.y, tub.w, tub.h);
+  ctx.strokeStyle = '#90caf9'; ctx.lineWidth = 3; ctx.strokeRect(tub.x, tub.y, tub.w, tub.h);
+  if (partyDone.bath) {
+    ctx.fillStyle = '#80deea'; ctx.fillRect(tub.x+4, tub.y+4, tub.w-8, tub.h-8);
+    for (let i=0;i<6;i++) { ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(tub.x+8+i*12,tub.y+14,5,0,Math.PI*2); ctx.fill(); }
+  }
+  // Junk food
+  ctx.fillStyle = partyDone.junk ? '#aaa' : '#ff8f00';
+  ctx.fillRect(junkfood.x, junkfood.y, junkfood.w, junkfood.h);
+  ctx.fillStyle='#e53935'; ctx.fillRect(junkfood.x+5, junkfood.y+5, 22, 16);
+  ctx.fillStyle='#ffd700'; ctx.fillRect(junkfood.x+27, junkfood.y+5, 20, 20);
+  // Phone
+  ctx.fillStyle = phonePhase==='ringing' ? (Math.floor(ticker/6)%2===0?'#f44336':'#e53935') : '#333';
+  ctx.fillRect(phoneObj.x, phoneObj.y, phoneObj.w, phoneObj.h);
+  ctx.fillStyle='#fff'; ctx.font='9px monospace';
+  if (phonePhase==='ringing' && Math.floor(ticker/8)%2===0) ctx.fillText('RING!', phoneObj.x-4, phoneObj.y-5);
+  // HUD
+  ctx.fillStyle = '#333'; ctx.font = '14px monospace';
+  ctx.fillText(`Party: ${partyCount}/4 done`, 10, 30);
+  // Eric
+  drawEric(eric.x, eric.y);
+}
+
+function drawNathanScene() {
+  drawRoom(); drawCouch();
+  // Time watch floating near Nathan
+  if (nathanPhase === 'ready') {
+    const wx = nathan.x+10, wy = nathan.y-22+Math.sin(ticker*0.06)*4;
+    ctx.fillStyle='#ffd700'; ctx.beginPath(); ctx.arc(wx+10, wy+8, 10, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#333'; ctx.lineWidth=2; ctx.strokeRect(wx, wy, 20, 8);
+    ctx.fillStyle='#333'; ctx.font='10px monospace'; ctx.fillText('3099',wx-4,wy+20);
+  }
+  drawNathanAt(nathan.x, nathan.y);
+  drawEric(eric.x, eric.y);
+}
+
+function drawWarp() {
+  ctx.fillStyle='#000'; ctx.fillRect(0, 0, 800, 600);
+  const ex=280, ey=280, nx=480, ny=280;
+  for (let r=0;r<6;r++) {
+    const rad = 30+r*22+((warpT*2)%30);
+    ctx.strokeStyle = `hsl(${(r*55+warpT*4)%360},100%,60%)`;
+    ctx.lineWidth = 3; ctx.globalAlpha = 0.9-r*0.13;
+    ctx.beginPath(); ctx.arc(ex, ey, rad, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(nx, ny, rad, 0, Math.PI*2); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  drawEric(ex-12, ey-12);
+  drawNathanAt(nx-11, ny-11);
+  ctx.fillStyle='#fff'; ctx.font='bold 22px monospace'; ctx.textAlign='center';
+  ctx.fillText('TRAVELING TO 3099...', 400, 80);
+  ctx.fillStyle='#aaa'; ctx.font='14px monospace';
+  ctx.fillText('"This is way better than bananas." — Eric', 400, 540);
+  ctx.textAlign='left';
+}
+
+function drawCity() {
+  ctx.fillStyle='#1a237e'; ctx.fillRect(0, 0, 800, 600);
+  ctx.fillStyle='#212121'; ctx.fillRect(0, 420, 800, 180);
+  drawBuildings(city2Buildings, ['#37474f','#455a64','#4a235a','#263238','#33691e']);
+  for (const car of flyingCars) {
+    ctx.fillStyle=car.col; ctx.fillRect(car.x, car.y, car.w, car.h);
+    ctx.fillStyle='#ffee58'; ctx.fillRect(car.spd>0?car.x+car.w-8:car.x, car.y+4, 8, car.h-8);
+  }
+  // Spills
+  const spills = [{x:150,y:360,w:44,h:20,c:'#e53935',n:'paint'},{x:280,y:400,w:38,h:18,c:'#fffde7',n:'milk'},{x:430,y:385,w:40,h:16,c:'#8d5524',n:'beans'}];
+  for (const s of spills) {
+    ctx.fillStyle=s.c; ctx.beginPath(); ctx.ellipse(s.x+s.w/2,s.y+s.h/2,s.w/2,s.h/2,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ccc'; ctx.font='11px monospace'; ctx.fillText(s.n, s.x, s.y-4);
+  }
+  // Warehouse
+  ctx.fillStyle='#4e342e'; ctx.fillRect(warehouseSign.x, warehouseSign.y, warehouseSign.w, warehouseSign.h);
+  ctx.fillStyle='#6d4c41'; ctx.fillRect(warehouseSign.x+50, warehouseSign.y+130, 40, 70);
+  ctx.fillStyle='#fff'; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+  ctx.fillText('WAREHOUSE', warehouseSign.x+warehouseSign.w/2, warehouseSign.y+40);
+  ctx.textAlign='left';
+  // Glitch man (only visible on odd frames based on glitchT sine)
+  const gv = Math.sin(glitchT*0.08)>0.2 && glitchT>60;
+  if (gv) drawLordTime(glitchMan.x, glitchMan.y, true);
+  // HUD
+  ctx.fillStyle='#fff'; ctx.font='13px monospace'; ctx.fillText('3099 AD  |  Arrow/WASD + E', 10, 25);
+  drawNathanAt(nathan.x, nathan.y);
+  drawEric(eric.x, eric.y);
+}
+
+function drawWarehouse() {
+  ctx.fillStyle='#0a0a0a'; ctx.fillRect(0, 0, 800, 600);
+  // Dim ceiling light
+  const lg = ctx.createRadialGradient(400,100,10,400,100,350);
+  lg.addColorStop(0,'rgba(120,110,80,0.25)'); lg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=lg; ctx.fillRect(0,0,800,600);
+  wh2Crates.forEach(c=>{
+    ctx.fillStyle='#4e342e'; ctx.fillRect(c.x,c.y,c.w,c.h);
+    ctx.strokeStyle='#3e2723'; ctx.lineWidth=2; ctx.strokeRect(c.x,c.y,c.w,c.h);
+    ctx.strokeStyle='#6d4c41'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(c.x,c.y); ctx.lineTo(c.x+c.w,c.y+c.h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c.x+c.w,c.y); ctx.lineTo(c.x,c.y+c.h); ctx.stroke();
+  });
+  // Dusty
+  if (whPhase !== 'intro') drawDusty(dustyObj.x, dustyObj.y, 1);
+
+  // Punching bags
+  if (whPhase === 'testing' || whPhase === 'done') {
+    ctx.fillStyle='#8d5524'; ctx.fillRect(bag1.x,bag1.y,bag1.w,bag1.h);
+    ctx.fillRect(bag2.x,bag2.y,bag2.w,bag2.h);
+    ctx.fillStyle='#555'; ctx.fillRect(bag1.x+22,bag1.y-20,6,20); ctx.fillRect(bag2.x+22,bag2.y-20,6,20);
+    if (testedEric) {
+      ctx.fillStyle='#00e676'; ctx.font='bold 14px monospace'; ctx.fillText('SMASHED!',bag1.x-4,bag1.y-26);
+      ctx.fillStyle='rgba(255,200,0,0.3)'; ctx.fillRect(bag1.x,bag1.y,bag1.w,bag1.h);
+    }
+    if (testedNathan) {
+      ctx.fillStyle='#00e676'; ctx.font='bold 14px monospace'; ctx.fillText('SLICED!',bag2.x,bag2.y-26);
+      ctx.fillStyle='rgba(0,200,255,0.2)'; ctx.fillRect(bag2.x,bag2.y,bag2.w,bag2.h);
+    }
+    drawNathanAt(nathan.x, nathan.y);
+  }
+
+  // RPS UI
+  if (whPhase === 'rps') {
+    ctx.fillStyle='rgba(0,0,0,0.88)'; ctx.fillRect(80,170,640,240);
+    ctx.strokeStyle='#7c4dff'; ctx.lineWidth=2; ctx.strokeRect(80,170,640,240);
+    ctx.fillStyle='#fff'; ctx.font='bold 22px monospace'; ctx.textAlign='center';
+    ctx.fillText('ROCK  PAPER  SCISSORS!', 400, 210);
+    ctx.font='18px monospace';
+    ctx.fillStyle='#f44336'; ctx.fillText('1 = Rock  ✊', 400, 255);
+    ctx.fillStyle='#2196f3'; ctx.fillText('2 = Paper  🤚', 400, 290);
+    ctx.fillStyle='#ff9800'; ctx.fillText('3 = Scissors  ✌', 400, 325);
+    ctx.fillStyle='#aaa'; ctx.font='13px monospace'; ctx.fillText('Loser gets the PICKLE', 400, 385);
+    ctx.textAlign='left';
+  }
+  if (whPhase === 'rps_result' && rpsMyChoice) {
+    ctx.fillStyle='rgba(0,0,0,0.88)'; ctx.fillRect(80,150,640,280);
+    ctx.strokeStyle='#7c4dff'; ctx.lineWidth=2; ctx.strokeRect(80,150,640,280);
+    ctx.fillStyle='#fff'; ctx.font='bold 20px monospace'; ctx.textAlign='center';
+    ctx.fillText(`You: ${rpsMyChoice.toUpperCase()}`, 260, 220);
+    ctx.fillText(`Nathan: ${rpsNatChoice.toUpperCase()}`, 560, 220);
+    const em = rpsResult==='win'?'🏆':rpsResult==='lose'?'😬':'🤝';
+    ctx.font='40px monospace'; ctx.fillText(em, 400, 280);
+    const rt = rpsResult==='win'  ? 'You WIN! Nathan gets the pickle.' :
+               rpsResult==='lose' ? 'Nathan wins! He takes the pickle.' :
+                                    'TIE — best of 3! Nathan still lost.';
+    ctx.fillStyle = rpsResult==='lose'?'#ff9800':'#00e676';
+    ctx.font='bold 16px monospace'; ctx.fillText(rt, 400, 340);
+    ctx.fillStyle='#aaa'; ctx.font='13px monospace'; ctx.fillText('Press E to continue', 400, 400);
+    ctx.textAlign='left';
+  }
+
+  drawEric(eric.x, eric.y);
+  ctx.fillStyle='#fff'; ctx.font='13px monospace'; ctx.fillText('Warehouse — 3099 AD', 10, 25);
+}
+
+function drawSearch() {
+  ctx.fillStyle='#1a1a2e'; ctx.fillRect(0, 0, 800, 600);
+  ctx.fillStyle='#16213e'; ctx.fillRect(0, 420, 800, 180);
+  for (let i=0;i<4;i++) {
+    const sx=80+i*210;
+    ctx.fillStyle='#37474f'; ctx.fillRect(sx,190,8,230);
+    ctx.fillStyle='#ffd740'; ctx.fillRect(sx-12,185,32,18);
+    const g=ctx.createRadialGradient(sx+4,203,2,sx+4,300,100);
+    g.addColorStop(0,'rgba(255,220,80,0.18)'); g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.fillRect(sx-100,203,208,220);
+  }
+  if (tapFlash > 0) {
+    ctx.fillStyle='rgba(255,80,0,0.3)'; ctx.fillRect(0,0,800,600);
+    ctx.fillStyle='#ff5722'; ctx.font='bold 28px monospace'; ctx.textAlign='center';
+    ctx.fillText('TAP!', eric.x+12, eric.y-30);
+    ctx.fillText('TAP!', nathan.x+11, nathan.y-30);
+    ctx.textAlign='left';
+  }
+  if (searchPhase === 'reveal') {
+    drawLordTime(lordPos.x, lordPos.y, false);
+    // Captive Ben
+    ctx.fillStyle='#555'; ctx.fillRect(benCap.x-4, benCap.y+4, benCap.w+8, benCap.h+4);
+    drawBen(benCap.x, benCap.y);
+    ctx.fillStyle='#e53935'; ctx.font='10px monospace'; ctx.fillText('~~tied~~', benCap.x-6, benCap.y+benCap.h+16);
+    // Axe
+    ctx.fillStyle='#888'; ctx.fillRect(lordPos.x+30,lordPos.y,4,32); ctx.fillRect(lordPos.x+26,lordPos.y-6,14,12);
+  }
+  ctx.fillStyle='#fff'; ctx.font='13px monospace'; ctx.fillText(`Taps: ${tapCount}/5`, 10, 25);
+  drawNathanAt(nathan.x, nathan.y);
+  drawEric(eric.x, eric.y);
+}
+
+function drawBattle() {
+  ctx.fillStyle='#1a0028'; ctx.fillRect(0, 0, 800, 600);
+  ctx.fillStyle='#2d0040'; ctx.fillRect(0, 460, 800, 140);
+  if (hitFlash>0) { ctx.fillStyle=`rgba(255,0,0,${hitFlash*0.04})`; ctx.fillRect(0,0,800,600); }
+  // HP bars
+  ctx.fillStyle='#333'; ctx.fillRect(40,30,300,22); ctx.fillRect(460,30,300,22);
+  ctx.fillStyle='#e53935'; ctx.fillRect(40,30,300*(ericHP/100),22);
+  ctx.fillStyle='#7c4dff'; ctx.fillRect(460,30,300*(lordHP/100),22);
+  ctx.fillStyle='#fff'; ctx.font='13px monospace';
+  ctx.fillText('ERIC',40,68); ctx.fillText(`${Math.round(ericHP)}%`,90,68);
+  ctx.fillText('LORD TIME',460,68); ctx.fillText(`${Math.round(lordHP)}%`,640,68);
+  // Fighters
+  drawEric(120, 340, 40, 56);
+  if (battlePhase==='fight' && (keys['e']||keys['E'])) {
+    ctx.fillStyle='#ffd700'; ctx.font='28px monospace'; ctx.fillText('⚡',165,330);
+  }
+  drawLordTime(600, 300, false);
+  if (lordAtkT < 12) { ctx.fillStyle='#7c4dff'; ctx.font='22px monospace'; ctx.fillText('⚔',570,290); }
+  // Captive Ben
+  drawBen(20, 490);
+  ctx.fillStyle='#aaa'; ctx.font='10px monospace'; ctx.fillText('Ben',20,540);
+  ctx.fillStyle='#fff'; ctx.font='bold 18px monospace'; ctx.textAlign='center';
+  ctx.fillText('MASH  E  TO  ATTACK!', 400, 510);
+  ctx.font='13px monospace'; ctx.fillText(`Hits: ${battleMash}`, 400, 535);
+  ctx.textAlign='left';
+}
+
+function drawBark() {
+  ctx.fillStyle='#000814'; ctx.fillRect(0, 0, 800, 600);
+  // Black hole
+  if (barkPhase==='suck') {
+    const bx=500, by=280;
+    const g=ctx.createRadialGradient(bx,by,0,bx,by,holeR);
+    g.addColorStop(0,'rgba(0,0,0,1)'); g.addColorStop(0.5,'rgba(80,0,180,0.9)'); g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(bx,by,holeR,0,Math.PI*2); ctx.fill();
+    for (let a=0;a<Math.PI*6;a+=0.15) {
+      const r=(a/(Math.PI*6))*holeR;
+      const sx=bx+Math.cos(a+barkT*0.08)*r, sy=by+Math.sin(a+barkT*0.08)*r;
+      ctx.fillStyle=`rgba(140,0,255,${0.6-a/(Math.PI*12)})`;
+      ctx.fillRect(sx-2,sy-2,4,4);
+    }
+    if (suckX > 360) drawLordTime(suckX, 270, false);
+  }
+  // Dusty (rising and growing)
+  const dy = Math.max(160, 380 - barkT*1.2);
+  drawDusty(180, dy, dustySize);
+  // Bark wave
+  if (barkPhase==='bark'||barkPhase==='suck') {
+    ctx.lineWidth=3;
+    for (let i=1;i<=4;i++) {
+      ctx.strokeStyle=`rgba(255,255,255,${0.5/i})`;
+      ctx.beginPath(); ctx.arc(180+14,dy+8,(barkT%40)*6+i*25,-0.5,0.5); ctx.stroke();
+    }
+    ctx.fillStyle='#fff'; ctx.font='bold 40px monospace'; ctx.textAlign='center';
+    ctx.fillText('BARK!!!', 360, 220);
+    ctx.textAlign='left';
+  }
+  if (barkPhase==='grow') {
+    ctx.fillStyle='#aaa'; ctx.font='16px monospace'; ctx.textAlign='center';
+    ctx.fillText('"Okay Dusty, Super..."', 400, 100);
+    ctx.textAlign='left';
+  }
+  drawEric(80, 420);
+  drawNathanAt(140, 425);
+  drawBen(60, 490);
+}
+
+function drawHomeEnd() {
+  drawRoom(); drawCouch();
+  drawEric(eric.x, eric.y);
+  drawNathanAt(eric.x+44, eric.y);
+  drawBen(eric.x+88, eric.y-4);
+  ctx.globalAlpha = certAlpha;
+  ctx.fillStyle='#fffde7'; ctx.fillRect(120,40,560,400);
+  ctx.strokeStyle='#ffd700'; ctx.lineWidth=5; ctx.strokeRect(120,40,560,400);
+  ctx.strokeStyle='#ff8f00'; ctx.lineWidth=2; ctx.strokeRect(132,52,536,376);
+  ctx.textAlign='center';
+  ctx.fillStyle='#1a237e'; ctx.font='bold 16px monospace'; ctx.fillText('This certificate certifies that', 400, 100);
+  ctx.font='bold 38px monospace'; ctx.fillStyle='#c62828'; ctx.fillText('ERIC', 400, 166);
+  ctx.font='16px monospace'; ctx.fillStyle='#333'; ctx.fillText('is now a member of', 400, 210);
+  ctx.font='bold 24px monospace'; ctx.fillStyle='#1565c0'; ctx.fillText('THE  TIME  SQUAD', 400, 254);
+  ctx.font='15px monospace'; ctx.fillStyle='#555'; ctx.fillText('His partner will be', 400, 295);
+  ctx.font='bold 30px monospace'; ctx.fillStyle='#2e7d32'; ctx.fillText('NATHAN', 400, 342);
+  ctx.font='14px monospace'; ctx.fillStyle='#555'; ctx.fillText('Signed,  Ben', 400, 400);
+  ctx.globalAlpha=1;
+  ctx.textAlign='left';
+  if (certPhase==='show') {
+    ctx.fillStyle='#333'; ctx.font='13px monospace'; ctx.textAlign='center';
+    ctx.fillText('Press E to continue...', 400, 490);
+    ctx.textAlign='left';
+  }
+}
+
+function drawEpilogue() {
+  ctx.fillStyle='#000'; ctx.fillRect(0, 0, 800, 600);
+  if (ep2Phase !== 'dark') {
+    // Mysterious silhouette
+    ctx.globalAlpha = watcherAlpha;
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(340, 220, 120, 160);
+    ctx.beginPath(); ctx.arc(400, 210, 50, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = Math.min(watcherAlpha*1.5, 1);
+    ctx.fillStyle = '#ff1744';
+    ctx.beginPath(); ctx.arc(380, 200, 7, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(420, 200, 7, 0, Math.PI*2); ctx.fill();
+    const eg=ctx.createRadialGradient(400,280,10,400,280,160);
+    eg.addColorStop(0,'rgba(200,0,0,0.12)'); eg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.globalAlpha=1; ctx.fillStyle=eg; ctx.fillRect(240,150,320,280);
+    ctx.fillStyle='rgba(200,200,200,0.18)'; ctx.font='72px monospace'; ctx.textAlign='center';
+    ctx.fillText('?', 400, 340);
+  }
+  if (ep2Phase==='text'||ep2Phase==='end') {
+    ctx.globalAlpha=ep2TextAlpha;
+    ctx.fillStyle='#999'; ctx.font='14px monospace'; ctx.textAlign='center';
+    ctx.fillText('Let\'s rewind to when they saved Ben.', 400, 430);
+    ctx.fillText('When Lord Time got sucked into the black hole,', 400, 460);
+    ctx.fillText('little did our heroes know that someone...', 400, 490);
+    ctx.fillStyle='#ff1744'; ctx.font='bold 20px monospace';
+    ctx.fillText('...or something was watching.', 400, 526);
+  }
+  if (ep2Phase==='end') {
+    ctx.globalAlpha=1;
+    ctx.fillStyle='#fff'; ctx.font='bold 30px monospace'; ctx.textAlign='center';
+    ctx.fillText('TO BE CONTINUED...', 400, 575);
+  }
+  ctx.globalAlpha=1; ctx.textAlign='left';
+  ctx.fillStyle='#ff5722'; ctx.font='bold 16px monospace'; ctx.textAlign='center';
+  ctx.fillText('E P I L O G U E', 400, 30);
+  ctx.textAlign='left';
+}
+
+function drawDialogue() {
+  if (!dialogueActive) return;
+  ctx.fillStyle='rgba(0,0,0,0.88)'; ctx.fillRect(18,415,764,170);
+  ctx.strokeStyle='#7c4dff'; ctx.lineWidth=2; ctx.strokeRect(18,415,764,170);
+  ctx.fillStyle='#fff'; ctx.font='16px monospace';
+  const line = dialogueLines[dialoguePage]||'';
+  const words = line.split(' ');
+  let ly=450, lt='';
+  for (const w of words) {
+    const test = lt+(lt?' ':'')+w;
+    if (ctx.measureText(test).width>720) { ctx.fillText(lt,36,ly); ly+=22; lt=w; }
+    else lt=test;
+  }
+  if (lt) ctx.fillText(lt, 36, ly);
+  ctx.fillStyle='#666'; ctx.font='12px monospace';
+  ctx.fillText(`(${dialoguePage+1}/${dialogueLines.length}) E / Space to continue`, 36, 570);
+}
+
+function drawHint() {
+  if (!showInteractHint || dialogueActive) return;
+  ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(270,560,260,28);
+  ctx.fillStyle='#ffd700'; ctx.font='13px monospace'; ctx.fillText(interactHintText, 280,579);
+}
+
+// ── MUSIC ─────────────────────────────────────────────────────
+(function setupAudio() {
+  let ac;
+  try { ac = new (window.AudioContext||window.webkitAudioContext)(); } catch(e) { return; }
+  function note(f, t, d, type='square', v=0.04) {
+    const o=ac.createOscillator(), g=ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.type=type; o.frequency.value=f;
+    g.gain.setValueAtTime(v, ac.currentTime+t);
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+t+d);
+    o.start(ac.currentTime+t); o.stop(ac.currentTime+t+d+0.01);
+  }
+  const B=0.16;
+  // Chapter 2 — slightly more adventurous / tense theme
+  const mel = [
+    [330,0],[370,1],[440,2],[494,3],[523,4],[494,5],[440,6],[494,7],
+    [523,8],[587,9],[659,10],[587,11],[523,12],[494,13],[440,14],[440,15],
+    [494,16],[523,17],[587,18],[659,19],[784,20],[698,21],[659,22],[587,23],
+    [523,24],[587,25],[523,26],[494,27],[440,28],[415,29],[392,30],[330,31],
+  ];
+  const bass = [165,165,196,165, 196,220,196,165];
+  function loop() {
+    const d = 32*B*1000;
+    mel.forEach(([f,b])=>note(f,b*B,B*0.65,'square',0.035));
+    bass.forEach((f,i)=>note(f,i*B*4,B*3.2,'triangle',0.055));
+    setTimeout(loop, d*0.96);
+  }
+  const start = () => { if(ac.state==='suspended') ac.resume(); loop(); };
+  document.addEventListener('keydown', start, { once: true });
+  canvas.addEventListener('touchstart', start, { once: true, passive: true });
+})();
+
+// ── GAME LOOP ─────────────────────────────────────────────────
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+gameLoop();
+</script>
+</body>
+</html>
