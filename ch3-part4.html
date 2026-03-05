@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Turbo Time Turtle 2000 — Chapter 3, Part 4</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  * { box-sizing: border-box; touch-action: none; }
+  body { margin: 0; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100dvh; overflow: hidden; }
+  #game-wrapper { position: relative; }
+  canvas { display: block; border: 2px solid #444; max-width: 100%; }
+  #touch-controls { display: none; width: 100%; max-width: 800px; background: #111; padding: 8px 16px; }
+  @media (pointer: coarse) { #touch-controls { display: flex; justify-content: space-between; align-items: center; } }
+  #dpad { display: grid; grid-template-columns: 44px 44px 44px; grid-template-rows: 44px 44px 44px; gap: 4px; }
+  .dpad-btn { background: #222; border: 2px solid #444; border-radius: 8px; color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .dpad-btn:active { background: #444; }
+  #dpad-empty { background: transparent; border: none; }
+  #btn-e { width: 80px; height: 80px; border-radius: 50%; background: #1a1a3a; border: 3px solid #7c4dff; color: #7c4dff; font-size: 22px; font-weight: bold; font-family: monospace; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; }
+  #btn-e:active { background: #2a2a5a; }
+</style>
+</head>
+<body>
+<div id="game-wrapper">
+  <canvas id="game" width="800" height="600"></canvas>
+</div>
+<div id="touch-controls">
+  <div id="dpad">
+    <div></div><div class="dpad-btn" id="btn-up">▲</div><div></div>
+    <div class="dpad-btn" id="btn-left">◀</div><div id="dpad-empty"></div><div class="dpad-btn" id="btn-right">▶</div>
+    <div></div><div class="dpad-btn" id="btn-down">▼</div><div></div>
+  </div>
+  <div id="btn-e">E</div>
+</div>
+
+<script>
+function resizeCanvas() {
+  const ctrl = document.getElementById('touch-controls');
+  const mob = window.matchMedia('(pointer: coarse)').matches;
+  const ch = mob ? (ctrl.offsetHeight || 120) : 0;
+  const s = Math.min(window.innerWidth / 800, (window.innerHeight - ch) / 600);
+  const c = document.getElementById('game');
+  c.style.width = Math.floor(800 * s) + 'px';
+  c.style.height = Math.floor(600 * s) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+</script>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+document.addEventListener('keyup',   e => { keys[e.key] = false; });
+
+function touchKey(k,d) { keys[k]=d; }
+function bindTouch(id,key) {
+  const el=document.getElementById(id); if(!el) return;
+  el.addEventListener('touchstart', e=>{e.preventDefault();touchKey(key,true); },{passive:false});
+  el.addEventListener('touchend',   e=>{e.preventDefault();touchKey(key,false);},{passive:false});
+  el.addEventListener('touchcancel',e=>{e.preventDefault();touchKey(key,false);},{passive:false});
+  el.addEventListener('mousedown',  ()=>touchKey(key,true));
+  el.addEventListener('mouseup',    ()=>touchKey(key,false));
+  el.addEventListener('mouseleave', ()=>touchKey(key,false));
+}
+bindTouch('btn-up','ArrowUp'); bindTouch('btn-down','ArrowDown');
+bindTouch('btn-left','ArrowLeft'); bindTouch('btn-right','ArrowRight');
+bindTouch('btn-e','e');
+canvas.addEventListener('touchend',e=>{e.preventDefault();if(dlgActive)advanceDlg();},{passive:false});
+
+// ── STATE ─────────────────────────────────────────────────────
+let scene='title', ticker=0, eDown=false, sceneLabel=0;
+let dlgActive=false, dlgLines=[], dlgPage=0, dlgCb=null;
+
+const E = {x:200,y:280,w:40,h:56,spd:3};
+const N = {x:260,y:285,w:36,h:52};
+
+// ── SCENE STATE ───────────────────────────────────────────────
+let titleT=0;
+
+// shadow_transform
+let transformT=0, transformPhase='shadows'; // shadows | morph | reveal
+let shadowForms=['rat','oldlady','rat','oldlady'];
+let morphT=0, currentForm=0;
+const FORMS=['rat','oldlady','rat','bomb','kid'];
+
+// prince_reveal
+let revealPhase='intro'; // intro | talk | done
+let revealT=0;
+const PT = {x:460,y:220,w:44,h:60}; // Prince Time position
+
+// battle
+let btPhase='fight', btT=0;
+let eHP=100, ptHP=100, mash=0, flash=0, ptAtkT=70;
+let ptForm='kid'; // switches during battle
+
+// explosion
+let explodeT=0, explodePhase='boom'; // boom | aftermath
+let boomR=0, shakeAmt=0;
+let ericLimping=false;
+
+// portal_plan
+let planPhase='spot'; // spot | rip | throw | open
+let planT=0;
+const OBJ_BUTTON={x:620,y:300,w:50,h:50};
+let badgeX=200, badgeY=280, badgeFlying=false, badgeFlyT=0;
+let portalR=0;
+
+// victory
+let victoryT=0, victoryPhase='shove'; // shove | celebrate
+
+// continue
+let continueT=0;
+
+// ── HELPERS ───────────────────────────────────────────────────
+function dlg(lines,cb){dlgLines=lines;dlgPage=0;dlgActive=true;dlgCb=cb||null;}
+function advanceDlg(){
+  dlgPage++;
+  if(dlgPage>=dlgLines.length){
+    dlgActive=false;
+    const cb=dlgCb; dlgCb=null;
+    if(cb) cb();
+  }
+}
+function near(a,b,d){return Math.hypot((a.x+a.w/2)-(b.x+b.w/2),(a.y+a.h/2)-(b.y+b.h/2))<d;}
+function collide(ax,ay,aw,ah,bx,by,bw,bh){return ax<bx+bw&&ax+aw>bx&&ay<by+bh&&ay+ah>by;}
+function moveE(obs){
+  let dx=0,dy=0;
+  if(keys['ArrowLeft']||keys['a']||keys['A']) dx=-E.spd;
+  if(keys['ArrowRight']||keys['d']||keys['D']) dx= E.spd;
+  if(keys['ArrowUp']||keys['w']||keys['W'])    dy=-E.spd;
+  if(keys['ArrowDown']||keys['s']||keys['S'])  dy= E.spd;
+  let nx=Math.max(4,Math.min(756,E.x+dx));
+  let ny=Math.max(60,Math.min(390,E.y+dy));
+  for(const o of obs){if(collide(nx,E.y,E.w,E.h,o.x,o.y,o.w,o.h))nx=E.x;}
+  for(const o of obs){if(collide(E.x,ny,E.w,E.h,o.x,o.y,o.w,o.h))ny=E.y;}
+  E.x=nx; E.y=ny;
+}
+
+// ── TRANSITIONS ───────────────────────────────────────────────
+function goTransform(){
+  scene='shadow_transform'; transformT=0; transformPhase='shadows'; morphT=0; currentForm=0;
+  E.x=160; E.y=300; N.x=220; N.y=305;
+  dlg([
+    'The pipe opened into a vast underground chamber.',
+    'The honey-cream smell was overwhelming.',
+    'Shadows writhed on the walls — shifting, changing.',
+    '"What... ARE those?" breathed Eric.',
+    '"They\'re changing shape." said Nathan.',
+    'A rat. An old lady. A rat again.',
+    '"Wait." said Nathan. "That\'s the SAME thing."',
+    '"It\'s a shapeshifter." said Eric.',
+  ],()=>{ transformPhase='morph'; morphT=0; });
+}
+function goReveal(){
+  scene='prince_reveal'; revealPhase='intro'; revealT=0;
+  E.x=160; E.y=300; N.x=220; N.y=305;
+  dlg([
+    'The shadows collapsed inward.',
+    'There was a flash of golden light.',
+    'And standing before them — a kid.',
+    'About their age. Brown hair. Wide grin.',
+    'A badge on his shirt read: "SHAPESHIFTER"',
+    '"Hi." said the kid.',
+    '"...Hi?" said Eric.',
+    '"I\'m Alex." said the kid. "But you can call me Prince Time."',
+    '"Prince TIME?!" said Eric.',
+    '"It\'s my villain name." said Alex/Prince Time proudly.',
+    '"You\'re a VILLAIN?!" said Nathan.',
+    '"Well — more of an agent of chaos, really." said Prince Time.',
+    '"I\'ve been messing with this island for WEEKS."',
+    '"The disappearing lady — that was you?!" said Eric.',
+    '"Yep! And the rat! And the smell! And the screaming shopkeeper!"',
+    '"...Why?!" said Eric.',
+    '"Because it\'s FUNNY." said Prince Time.',
+    '"It is NOT funny!" said Eric.',
+    '"It\'s a LITTLE funny." said Prince Time.',
+    '"Okay." said Nathan. "We need to stop him."',
+    '"Agreed." said Eric. "Any last words, Prince Time?"',
+    '"Yeah." said Prince Time. He grinned. "CATCH ME IF YOU CAN."',
+  ],()=>{ revealPhase='fight'; goBattle(); });
+}
+function goBattle(){
+  scene='battle'; btPhase='fight'; btT=0;
+  eHP=100; ptHP=100; mash=0; flash=0; ptAtkT=70; ptForm='kid';
+  dlg([
+    '⚔  BATTLE! ⚔',
+    'Prince Time is fast — AND he keeps changing shape!',
+    'Mash E to attack! Don\'t let up!',
+    '[ MASH E to hit! ]',
+  ]);
+}
+function goExplosion(){
+  scene='explosion'; explodeT=0; explodePhase='boom'; boomR=0; shakeAmt=10; ericLimping=true;
+  dlg([
+    'Prince Time reached into his pocket.',
+    '"Oh, one more trick." he said.',
+    'He pulled out a badge — and THREW it at the ground.',
+    'BOOM!!!',
+    'The whole chamber shook.',
+    'Dust and rocks everywhere.',
+    '"OW!" yelled Eric. "MY LEG!"',
+    '"Eric?!" Nathan rushed over.',
+    '"I\'m okay — I just— OW. I can\'t run." said Eric.',
+    '"Prince Time is getting away!" said Nathan.',
+  ],()=>{ explodePhase='aftermath'; });
+}
+function goPlan(){
+  scene='portal_plan'; planPhase='spot'; planT=0;
+  badgeX=200; badgeY=280; badgeFlying=false; badgeFlyT=0; portalR=0;
+  E.x=160; E.y=320; N.x=240; N.y=290;
+  dlg([
+    '"WAIT!" shouted Nathan.',
+    'On the far wall — a panel. A single large button.',
+    'Glowing purple. Pulsing.',
+    '"That wasn\'t there before." said Eric.',
+    '"Prince Time\'s badge hit the wall and cracked it open." said Nathan.',
+    '"What does the button DO?" said Eric.',
+    '"I don\'t know. But that badge has his energy on it."',
+    '"If I throw the badge onto the button—" Nathan started.',
+    '"—it might open something." finished Eric.',
+    '"A portal." said Nathan.',
+    '"Do it." said Eric. "DO IT NOW."',
+  ],()=>{ planPhase='rip'; });
+}
+function goVictory(){
+  scene='victory'; victoryT=0; victoryPhase='shove';
+  dlg([
+    'The badge hit the button.',
+    'A crack of purple light split the air.',
+    'A portal tore open — swirling, humming, enormous.',
+    '"What IS that?!" yelled Prince Time.',
+    '"Your way out." said Nathan.',
+    'Nathan grabbed Prince Time by the collar.',
+    '"HEY—!" yelled Prince Time.',
+    'SHOVE.',
+    'Prince Time tumbled through the portal.',
+    '"NOOOOOOO—!" His voice cut off as the portal snapped shut.',
+    'Silence.',
+    '"...Did that just work?" said Eric.',
+    '"That just worked." said Nathan.',
+    '"NICE." said Eric.',
+    'Nathan helped Eric up. Eric winced, but grinned.',
+    '"Good throw." said Eric.',
+    '"Good plan." said Nathan.',
+  ],()=>{ victoryPhase='celebrate'; });
+}
+function goContinue(){ scene='continue'; continueT=0; }
+
+// ── UPDATE ────────────────────────────────────────────────────
+function uTitle(){
+  titleT++;
+  const ed=keys['e']||keys['E']||keys[' '];
+  if((ed&&!eDown)||titleT>360){eDown=true; goTransform();}
+}
+
+function uTransform(){
+  transformT++;
+  if(transformPhase==='morph'){
+    morphT++;
+    if(morphT%55===0 && currentForm<FORMS.length-1){ currentForm++; }
+    if(currentForm>=FORMS.length-1 && morphT>80){ goReveal(); }
+  }
+}
+
+function uReveal(){
+  revealT++;
+  // waiting for dlg to finish — goReveal's dlg cb calls goBattle
+}
+
+function uBattle(){
+  btT++; if(flash>0) flash--;
+  if(btPhase!=='fight') return;
+
+  // Eric attacks
+  if((keys['e']||keys['E'])&&!eDown){
+    mash++; ptHP=Math.max(0,ptHP-6); flash=8; eDown=true;
+    // PT flinches into different forms
+    if(mash%5===0) ptForm=['kid','rat','oldlady','bomb','kid'][Math.floor(Math.random()*4)];
+  }
+
+  // Prince Time attacks back
+  ptAtkT--;
+  if(ptAtkT<=0){
+    eHP=Math.max(0,eHP-10); flash=10;
+    ptAtkT=Math.max(28,70-Math.floor(btT/5));
+    ptForm=['rat','oldlady','kid','bomb'][Math.floor(Math.random()*4)];
+  }
+
+  // PT can't be fully beaten — at 15 HP he does the bomb trick
+  if(ptHP<=15 || btT>500){
+    btPhase='escape';
+    dlg([
+      '"Not bad." said Prince Time, grinning even while hurt.',
+      '"But I\'m not done yet!"',
+    ],()=>{ goExplosion(); });
+  }
+}
+
+function uExplosion(){
+  explodeT++;
+  if(shakeAmt>0) shakeAmt=Math.max(0,shakeAmt-0.12);
+  if(explodeT<60) boomR=Math.min(240,explodeT*5);
+  if(explodePhase==='aftermath' && !dlgActive && explodeT>120){
+    goPlan();
+  }
+}
+
+function uPlan(){
+  planT++;
+  moveE([OBJ_BUTTON]);
+  N.x+=(240-N.x)*0.05; N.y+=(290-N.y)*0.05;
+
+  if(planPhase==='rip'){
+    // Nathan needs to grab badge and throw
+    if(!dlgActive && planT>30){
+      planPhase='throw'; badgeFlying=true; badgeFlyT=0;
+    }
+  }
+
+  if(planPhase==='throw' && badgeFlying){
+    badgeFlyT++;
+    // badge flies from Nathan to the button
+    const progress=Math.min(1,badgeFlyT/45);
+    badgeX=N.x+18+(OBJ_BUTTON.x+25-N.x-18)*progress;
+    badgeY=N.y+10+(OBJ_BUTTON.y+25-N.y-10)*progress - Math.sin(progress*Math.PI)*60;
+    if(badgeFlyT>=45){
+      badgeFlying=false; planPhase='open';
+    }
+  }
+
+  if(planPhase==='open'){
+    portalR=Math.min(180,portalR+4);
+    if(portalR>=180 && planT>120) goVictory();
+  }
+}
+
+function uVictory(){
+  victoryT++;
+  if(victoryPhase==='celebrate' && victoryT>200 && !dlgActive){
+    goContinue();
+  }
+}
+
+function uContinue(){
+  continueT++;
+  const ed=keys['e']||keys['E']||keys[' '];
+  if(continueT>60 && ed && !eDown){ window.location.href='ch3-part5.html'; }
+}
+
+// ── SPRITES ───────────────────────────────────────────────────
+function dEric(x,y,label,limping){
+  ctx.fillStyle='rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(x+20,y+58,18,6,0,0,Math.PI*2); ctx.fill();
+  // limping: one leg raised slightly
+  if(limping){
+    ctx.fillStyle='#1a237e'; ctx.fillRect(x+4,y+32,15,17); ctx.fillRect(x+21,y+32,15,14);
+    ctx.fillStyle='#212121'; ctx.fillRect(x+2,y+47,18,9); ctx.fillRect(x+20,y+44,18,9);
+    // bandage on leg
+    ctx.fillStyle='#fff'; ctx.fillRect(x+20,y+34,16,8);
+    ctx.strokeStyle='#e53935'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x+20,y+38); ctx.lineTo(x+36,y+38); ctx.stroke();
+  } else {
+    ctx.fillStyle='#1a237e'; ctx.fillRect(x+4,y+32,15,17); ctx.fillRect(x+21,y+32,15,17);
+    ctx.fillStyle='#212121'; ctx.fillRect(x+2,y+47,18,9); ctx.fillRect(x+20,y+47,18,9);
+  }
+  ctx.fillStyle='#bf360c'; ctx.fillRect(x+3,y+30,34,5);
+  ctx.fillStyle='#1565c0'; ctx.fillRect(x+2,y+18,36,14);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-5,y+18,9,18); ctx.fillRect(x+36,y+18,9,18);
+  ctx.fillStyle='#ffb74d'; ctx.fillRect(x-5,y+33,9,5); ctx.fillRect(x+36,y+33,9,5);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+16,y+14,8,6);
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+20,y+12,14,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#4e342e'; ctx.beginPath(); ctx.arc(x+20,y+6,14,Math.PI,0); ctx.fill(); ctx.fillRect(x+6,y,28,8);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x+14,y+12,4,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+26,y+12,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a237e'; ctx.beginPath(); ctx.arc(x+15,y+12,2,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+27,y+12,2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#4e342e'; ctx.fillRect(x+10,y+7,8,2); ctx.fillRect(x+22,y+7,8,2);
+  ctx.strokeStyle='#5d4037'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(x+20,y+16,4,0.15,Math.PI-0.15); ctx.stroke();
+  if(label&&sceneLabel>0&&Math.floor(ticker/12)%2===0){
+    ctx.fillStyle='#ffd700'; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+    ctx.fillText('▼ YOU (ERIC)',x+20,y-8); ctx.textAlign='left';
+  }
+}
+
+function dNathan(x,y){
+  ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(x+18,y+53,16,5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2e7d32'; ctx.fillRect(x+2,y+17,32,13);
+  ctx.fillStyle='#37474f'; ctx.fillRect(x+3,y+29,13,15); ctx.fillRect(x+20,y+29,13,15);
+  ctx.fillStyle='#1b5e20'; ctx.fillRect(x+2,y+44,15,8); ctx.fillRect(x+19,y+44,15,8);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-4,y+17,8,16); ctx.fillRect(x+32,y+17,8,16);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+14,y+13,8,6);
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+18,y+11,12,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#f9a825'; ctx.beginPath(); ctx.arc(x+18,y+5,12,Math.PI,0); ctx.fill(); ctx.fillRect(x+6,y,24,7);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x+12,y+11,3.5,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+24,y+11,3.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1565c0'; ctx.beginPath(); ctx.arc(x+13,y+11,1.8,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+25,y+11,1.8,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#f9a825'; ctx.fillRect(x+9,y+7,7,2); ctx.fillRect(x+21,y+7,7,2);
+}
+
+// ── dPrinceTime — the shapeshifter ────────────────────────────
+function dPrinceTime(x,y,form){
+  form=form||'kid';
+  if(form==='kid')     dPT_kid(x,y);
+  if(form==='rat')     dPT_rat(x,y);
+  if(form==='oldlady') dPT_oldlady(x,y);
+  if(form==='bomb')    dPT_bomb(x,y);
+}
+
+function dPT_kid(x,y){
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(x+22,y+58,18,6,0,0,Math.PI*2); ctx.fill();
+  // shoes — red and flashy
+  ctx.fillStyle='#c62828'; ctx.fillRect(x+2,y+48,18,9); ctx.fillRect(x+22,y+48,18,9);
+  // pants — black
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(x+4,y+33,16,17); ctx.fillRect(x+24,y+33,16,17);
+  // belt — gold
+  ctx.fillStyle='#ffd700'; ctx.fillRect(x+3,y+31,38,5);
+  // shirt — deep purple with badge
+  ctx.fillStyle='#4a0080'; ctx.fillRect(x+2,y+19,40,14);
+  // arms
+  ctx.fillStyle='#4a0080'; ctx.fillRect(x-6,y+19,10,18); ctx.fillRect(x+40,y+19,10,18);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-6,y+34,10,5); ctx.fillRect(x+40,y+34,10,5);
+  // neck
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+18,y+15,8,6);
+  // head
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+22,y+13,14,0,Math.PI*2); ctx.fill();
+  // brown hair — slightly wild
+  ctx.fillStyle='#5d4037';
+  ctx.beginPath(); ctx.arc(x+22,y+6,14,Math.PI,0); ctx.fill();
+  ctx.fillRect(x+8,y,28,9);
+  ctx.fillRect(x+6,y+2,6,6); ctx.fillRect(x+32,y+2,6,6); // hair tufts
+  // eyes — mischievous, wide
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x+15,y+12,4.5,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+29,y+12,4.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#7c4dff'; ctx.beginPath(); ctx.arc(x+16,y+12,2.5,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+30,y+12,2.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(x+16.5,y+11.5,1,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+30.5,y+11.5,1,0,Math.PI*2); ctx.fill();
+  // raised eyebrows — cocky
+  ctx.fillStyle='#5d4037'; ctx.fillRect(x+11,y+6,7,2); ctx.fillRect(x+26,y+6,7,2);
+  // big grin
+  ctx.strokeStyle='#5d4037'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(x+22,y+18,5,0.05,Math.PI-0.05); ctx.stroke();
+  // badge on shirt
+  ctx.fillStyle='#ffd700'; ctx.fillRect(x+8,y+21,22,8);
+  ctx.fillStyle='#1a1a1a'; ctx.font='bold 5px monospace'; ctx.textAlign='center';
+  ctx.fillText('SHAPESHIFTER',x+19,x>0?y+27:27); ctx.textAlign='left';
+  // honey/cream glow aura
+  const ga=(Math.sin(ticker*0.08)+1)*0.5*0.2+0.05;
+  ctx.fillStyle=`rgba(255,215,50,${ga})`;
+  ctx.beginPath(); ctx.ellipse(x+22,y+30,34,40,0,0,Math.PI*2); ctx.fill();
+}
+
+function dPT_rat(x,y){
+  const bob=Math.sin(ticker*0.25)*2;
+  ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(x+14,y+18+bob,14,5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#7c4dff'; // purple-tinted rat
+  ctx.beginPath(); ctx.ellipse(x+14,y+8+bob,16,9,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x+2,y+5+bob,9,7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#9575cd'; ctx.beginPath(); ctx.ellipse(x-3,y+5+bob,5,4,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#e57373'; ctx.beginPath(); ctx.arc(x-7,y+4+bob,2.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ce93d8'; ctx.beginPath(); ctx.arc(x+2,y+bob,6,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#f48fb1'; ctx.beginPath(); ctx.arc(x+2,y+bob,3.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x-1,y+4+bob,2.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#7c4dff'; ctx.beginPath(); ctx.arc(x-1,y+4+bob,1.5,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#9575cd'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x+28,y+9+bob); ctx.quadraticCurveTo(x+40,y+4+bob,x+44,y+14+bob); ctx.stroke();
+  // glowing badge visible even as rat
+  ctx.fillStyle='rgba(255,215,0,0.6)'; ctx.fillRect(x+16,y+3+bob,10,5);
+  ctx.fillStyle='#1a1a1a'; ctx.font='4px monospace'; ctx.textAlign='center';
+  ctx.fillText('S',x+21,y+7+bob); ctx.textAlign='left';
+}
+
+function dPT_oldlady(x,y){
+  ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(x+14,y+52,13,4,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#212121'; ctx.fillRect(x+2,y+44,12,8); ctx.fillRect(x+16,y+44,12,8);
+  ctx.fillStyle='#4a148c'; ctx.fillRect(x+1,y+20,26,26); // skirt
+  ctx.fillStyle='#6a1b9a'; ctx.fillRect(x+2,y+12,24,12); // coat — now purple
+  ctx.fillStyle='#6a1b9a'; ctx.fillRect(x-4,y+14,8,12); ctx.fillRect(x+24,y+14,8,12);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-4,y+24,8,5); ctx.fillRect(x+24,y+24,8,5);
+  ctx.strokeStyle='#ffd700'; ctx.lineWidth=3; // golden cane
+  ctx.beginPath(); ctx.moveTo(x-2,y+28); ctx.lineTo(x-6,y+50); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x-8,y+50); ctx.lineTo(x-4,y+50); ctx.stroke();
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+11,y+8,7,6);
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+14,y+6,11,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ce93d8'; ctx.beginPath(); ctx.arc(x+14,y+1,11,Math.PI,0); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+8,y+4,6,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+20,y+4,6,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#7c4dff'; ctx.beginPath(); ctx.arc(x+10,y+6,1.5,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+18,y+6,1.5,0,Math.PI*2); ctx.fill();
+  // badge visible on coat
+  ctx.fillStyle='#ffd700'; ctx.fillRect(x+8,y+14,16,6);
+  ctx.fillStyle='#1a1a1a'; ctx.font='4px monospace'; ctx.textAlign='center';
+  ctx.fillText('S.S.',x+16,y+19); ctx.textAlign='left';
+}
+
+function dPT_bomb(x,y){
+  const fuse=Math.sin(ticker*0.3)*3;
+  // fuse spark
+  ctx.fillStyle='#ff5722';
+  ctx.beginPath(); ctx.arc(x+20,y-18+fuse,5+Math.random()*4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ffca28'; ctx.beginPath(); ctx.arc(x+20,y-16+fuse,3,0,Math.PI*2); ctx.fill();
+  // fuse string
+  ctx.strokeStyle='#8d6e63'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x+20,y+fuse); ctx.quadraticCurveTo(x+28,y-10+fuse,x+20,y-18+fuse); ctx.stroke();
+  // body — large round black bomb
+  ctx.fillStyle='#1a1a1a'; ctx.beginPath(); ctx.arc(x+20,y+20,28,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2a2a2a'; ctx.beginPath(); ctx.arc(x+12,y+12,10,0,Math.PI*2); ctx.fill(); // shine
+  // badge on bomb
+  ctx.fillStyle='#ffd700'; ctx.fillRect(x+8,y+16,24,10);
+  ctx.fillStyle='#1a1a1a'; ctx.font='bold 6px monospace'; ctx.textAlign='center';
+  ctx.fillText('SHAPESHIFTER',x+20,y+24); ctx.textAlign='left';
+  // glow
+  const bg=(Math.sin(ticker*0.1)+1)*0.5*0.3+0.1;
+  ctx.fillStyle=`rgba(255,100,0,${bg})`;
+  ctx.beginPath(); ctx.arc(x+20,y+20,32,0,Math.PI*2); ctx.fill();
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(x+20,y+52,22,6,0,0,Math.PI*2); ctx.fill();
+}
+
+// ── BACKGROUND ────────────────────────────────────────────────
+function dChamber(){
+  // Underground chamber
+  ctx.fillStyle='#0a0a0f'; ctx.fillRect(0,0,800,600);
+  // stone walls
+  const wg=ctx.createRadialGradient(400,300,60,400,300,450);
+  wg.addColorStop(0,'#1a1a2e'); wg.addColorStop(1,'#0a0a0f');
+  ctx.fillStyle=wg; ctx.fillRect(0,0,800,600);
+  // stone bricks
+  ctx.strokeStyle='rgba(80,60,100,0.25)'; ctx.lineWidth=1;
+  for(let y=0;y<600;y+=40){
+    for(let x=0;x<800;x+=60){
+      ctx.strokeRect(x+(y%80===0?0:30),y,60,40);
+    }
+  }
+  // floor glow from portal/magic
+  const fg=ctx.createRadialGradient(400,420,10,400,420,220);
+  fg.addColorStop(0,'rgba(120,0,255,0.12)'); fg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=fg; ctx.fillRect(0,200,800,400);
+  // honey-amber drips on walls
+  for(let di=0;di<6;di++){
+    const dx=80+di*120;
+    const dlen=30+di%3*20;
+    ctx.fillStyle='rgba(255,180,50,0.15)';
+    ctx.fillRect(dx,0,8,dlen);
+    ctx.beginPath(); ctx.arc(dx+4,dlen,4,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function glow(obj,nearDist){
+  if(!near(E,obj,nearDist)) return;
+  const a=(Math.sin(ticker*0.12)+1)*0.5*0.35+0.15;
+  ctx.fillStyle=`rgba(255,215,0,${a})`; ctx.fillRect(obj.x-6,obj.y-6,obj.w+12,obj.h+12);
+  ctx.strokeStyle=`rgba(255,215,0,${a+0.3})`; ctx.lineWidth=3; ctx.strokeRect(obj.x-6,obj.y-6,obj.w+12,obj.h+12);
+  if(!dlgActive){
+    const ey=obj.y-28+Math.sin(ticker*0.1)*5;
+    ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(obj.x+obj.w/2-20,ey-14,40,18);
+    ctx.fillStyle='#ffd700'; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+    ctx.fillText('[E]',obj.x+obj.w/2,ey); ctx.textAlign='left';
+  }
+}
+
+// ── SCENE DRAWS ───────────────────────────────────────────────
+function dTitle(){
+  ctx.fillStyle='#000011'; ctx.fillRect(0,0,800,600);
+  for(let i=0;i<90;i++){
+    const sx=(i*137+50)%800,sy=(i*97+30)%580;
+    ctx.fillStyle=`rgba(255,255,255,${Math.sin(ticker*0.03+i)*0.4+0.6})`;
+    ctx.fillRect(sx,sy,1+(i%5===0?1:0),1+(i%5===0?1:0));
+  }
+  ctx.textAlign='center';
+  ctx.shadowColor='#7c4dff'; ctx.shadowBlur=30;
+  ctx.fillStyle='#7c4dff'; ctx.font='bold 46px monospace'; ctx.fillText('TURBO TIME TURTLE 2000',400,120);
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#00e676'; ctx.font='bold 28px monospace'; ctx.fillText('Chapter 3',400,172);
+  ctx.fillStyle='#ffd700'; ctx.font='20px monospace'; ctx.fillText('The Lost Isle',400,212);
+  ctx.fillStyle='#ce93d8'; ctx.font='bold 17px monospace'; ctx.fillText('Part 4 — Prince Time',400,248);
+  ctx.fillStyle='#aaa'; ctx.font='15px monospace'; ctx.fillText('A story by Samarth Thakkar',400,285);
+  ctx.fillStyle='#555'; ctx.font='13px monospace'; ctx.fillText('Controls: WASD / Arrow keys to move,  E to interact',400,360);
+  ctx.fillStyle='#fff'; ctx.font='17px monospace';
+  if(Math.floor(ticker/15)%2===0) ctx.fillText('► Press E or Space to Start ◄',400,420);
+  ctx.textAlign='left';
+}
+
+function dTransform(){
+  dChamber();
+
+  if(transformPhase==='shadows'){
+    // shifting shadow blobs
+    for(let si=0;si<6;si++){
+      const sx=200+si*75+Math.sin(ticker*0.04+si)*20;
+      const sy=280+Math.cos(ticker*0.05+si*1.3)*25;
+      const sr=22+Math.sin(ticker*0.07+si*0.9)*8;
+      const sa=0.5+Math.sin(ticker*0.06+si)*0.3;
+      ctx.fillStyle=`rgba(80,0,180,${sa})`;
+      ctx.beginPath(); ctx.arc(sx,sy,sr,0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle='rgba(255,215,50,0.12)'; ctx.fillRect(0,0,800,600);
+  }
+
+  if(transformPhase==='morph'){
+    // morphing through forms
+    const form=FORMS[currentForm]||'kid';
+    const pulse=Math.sin(morphT*0.2)*8;
+    // transformation flash ring
+    const rg=ctx.createRadialGradient(400,280,10,400,280,80+pulse);
+    rg.addColorStop(0,'rgba(200,100,255,0.35)'); rg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=rg; ctx.fillRect(250,160,300,300);
+    ctx.save();
+    const sc=0.9+Math.sin(morphT*0.25)*0.15;
+    ctx.translate(400,280); ctx.scale(sc,sc); ctx.translate(-22,-30);
+    dPrinceTime(0,0,form);
+    ctx.restore();
+    ctx.fillStyle='#ce93d8'; ctx.font='bold 16px monospace'; ctx.textAlign='center';
+    ctx.fillText('???',400,200); ctx.textAlign='left';
+  }
+
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,240,26);
+  ctx.fillStyle='#ce93d8'; ctx.font='bold 13px monospace'; ctx.fillText('Underground Chamber',14,27);
+  dNathan(N.x,N.y); dEric(E.x,E.y,true,false);
+}
+
+function dReveal(){
+  dChamber();
+  // spotlight on Prince Time
+  const sg=ctx.createRadialGradient(PT.x+22,PT.y+30,10,PT.x+22,PT.y+30,160);
+  sg.addColorStop(0,'rgba(200,150,255,0.25)'); sg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=sg; ctx.fillRect(PT.x-100,PT.y-60,320,320);
+
+  dPrinceTime(PT.x,PT.y,'kid');
+  ctx.fillStyle='#ffd700'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
+  ctx.fillText('PRINCE TIME (Alex)',PT.x+22,PT.y-18); ctx.textAlign='left';
+
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,240,26);
+  ctx.fillStyle='#ce93d8'; ctx.font='bold 13px monospace'; ctx.fillText('Underground Chamber',14,27);
+  dNathan(N.x,N.y); dEric(E.x,E.y,true,false);
+}
+
+function dBattle(){
+  // battle arena
+  ctx.fillStyle='#0d0020'; ctx.fillRect(0,0,800,600);
+  ctx.fillStyle='#160030'; ctx.fillRect(0,440,800,160);
+  if(flash>0){ctx.fillStyle=`rgba(255,0,0,${flash*0.05})`; ctx.fillRect(0,0,800,600);}
+
+  // arena floor lines
+  ctx.strokeStyle='rgba(124,77,255,0.25)'; ctx.lineWidth=2;
+  for(let x=0;x<800;x+=80){ctx.beginPath(); ctx.moveTo(x,440); ctx.lineTo(x,600); ctx.stroke();}
+  for(let x=0;x<800;x+=80){ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,600); ctx.stroke();}
+
+  // HP bars
+  ctx.fillStyle='#222'; ctx.fillRect(30,28,300,26); ctx.fillRect(470,28,300,26);
+  ctx.fillStyle='#1565c0'; ctx.fillRect(30,28,300*(eHP/100),26);
+  ctx.fillStyle='#7c4dff'; ctx.fillRect(470,28,300*(ptHP/100),26);
+  ctx.fillStyle='#fff'; ctx.font='bold 13px monospace';
+  ctx.fillText('ERIC',32,22); ctx.fillText(`${Math.round(eHP)}%`,90,22);
+  ctx.fillText('PRINCE TIME',472,22); ctx.fillText(`${Math.round(ptHP)}%`,620,22);
+
+  // fighters
+  dEric(100,310,false,false);
+  if((keys['e']||keys['E'])&&btPhase==='fight'){
+    ctx.fillStyle='#ffd700'; ctx.font='32px sans-serif'; ctx.fillText('⚡',148,300);
+  }
+
+  // Prince Time — changes form during battle
+  const btX=580, btY=280;
+  dPrinceTime(btX,btY,ptForm);
+  if(ptAtkT<18){
+    ctx.fillStyle='#ce93d8'; ctx.font='26px sans-serif'; ctx.fillText('★',btX-20,btY);
+  }
+  ctx.fillStyle='#ffd700'; ctx.font='bold 18px monospace'; ctx.textAlign='center';
+  ctx.shadowColor='#ffd700'; ctx.shadowBlur=8;
+  ctx.fillText('MASH  [ E ]  TO ATTACK!',400,490);
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#ce93d8'; ctx.font='13px monospace';
+  ctx.fillText(`Hits: ${mash}  |  He keeps CHANGING SHAPE!`,400,518);
+  ctx.textAlign='left';
+  // form label
+  ctx.fillStyle='#aaa'; ctx.font='11px monospace'; ctx.textAlign='center';
+  ctx.fillText(`Current form: ${ptForm.toUpperCase()}`,btX+22,btY-16); ctx.textAlign='left';
+}
+
+function dExplosion(){
+  const shk=shakeAmt*Math.sin(ticker*0.8);
+  ctx.save(); ctx.translate(shk,shk*0.4);
+  dChamber();
+
+  if(explodePhase==='boom'){
+    const bx=460,by=280;
+    for(let r=4;r>=0;r--){
+      const rad=boomR*(1-r*0.18);
+      const bg=ctx.createRadialGradient(bx,by,0,bx,by,rad);
+      bg.addColorStop(0,r===0?'#fff':'rgba(255,160,0,0.9)');
+      bg.addColorStop(0.4,'rgba(255,50,0,0.7)');
+      bg.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=bg; ctx.beginPath(); ctx.arc(bx,by,rad,0,Math.PI*2); ctx.fill();
+    }
+    if(boomR>40){
+      ctx.shadowColor='#fff'; ctx.shadowBlur=30;
+      ctx.fillStyle='#fff'; ctx.font='bold 56px monospace'; ctx.textAlign='center';
+      ctx.fillText('BOOM!!!',400,300);
+      ctx.shadowBlur=0; ctx.textAlign='left';
+    }
+  }
+
+  if(explodePhase==='aftermath'){
+    // smoke + debris
+    for(let pi=0;pi<12;pi++){
+      const px=300+pi*30+Math.sin(explodeT*0.05+pi)*20;
+      const py=250+Math.cos(explodeT*0.04+pi)*30;
+      const pa=0.3+Math.sin(pi)*0.2;
+      ctx.fillStyle=`rgba(100,80,80,${pa})`; ctx.beginPath(); ctx.arc(px,py,8+pi%4*3,0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle='rgba(100,80,80,0.2)'; ctx.fillRect(0,0,800,600);
+
+    // Eric on the ground, clutching leg
+    dEric(160,340,false,true);
+    ctx.fillStyle='#f44336'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
+    ctx.fillText('OW! MY LEG!',180,330); ctx.textAlign='left';
+
+    // Nathan crouching over Eric
+    dNathan(220,300);
+
+    // Prince Time escaping in background
+    dPrinceTime(560+Math.sin(explodeT*0.06)*5,230,'kid');
+    ctx.fillStyle='#ce93d8'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
+    ctx.fillText('heh heh heh...',600,220); ctx.textAlign='left';
+  }
+
+  ctx.restore();
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,180,26);
+  ctx.fillStyle='#ff5722'; ctx.font='bold 13px monospace'; ctx.fillText('EXPLOSION!!!',14,27);
+}
+
+function dPlan(){
+  dChamber();
+
+  // cracked wall with portal button
+  ctx.fillStyle='#2a1a3a'; ctx.fillRect(570,250,180,200);
+  ctx.strokeStyle='#4a2a6a'; ctx.lineWidth=2; ctx.strokeRect(570,250,180,200);
+  // cracks in wall
+  ctx.strokeStyle='rgba(200,150,255,0.5)'; ctx.lineWidth=1;
+  for(let ci=0;ci<5;ci++){
+    const cx=600+ci*25;
+    ctx.beginPath(); ctx.moveTo(cx,252); ctx.lineTo(cx+10,280+ci*10); ctx.lineTo(cx-5,310+ci*8); ctx.stroke();
+  }
+  // THE BUTTON
+  const btnPulse=(Math.sin(ticker*0.1)+1)*0.5;
+  const btnGrad=ctx.createRadialGradient(OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,4,OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,30);
+  btnGrad.addColorStop(0,`rgba(180,100,255,${0.7+btnPulse*0.3})`);
+  btnGrad.addColorStop(1,`rgba(80,0,180,${0.4+btnPulse*0.2})`);
+  ctx.fillStyle=btnGrad; ctx.beginPath(); ctx.arc(OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,25,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=`rgba(220,180,255,${0.8+btnPulse*0.2})`; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,25,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.font='bold 9px monospace'; ctx.textAlign='center';
+  ctx.fillText('PORTAL',OBJ_BUTTON.x+25,OBJ_BUTTON.y+22);
+  ctx.fillText('BUTTON',OBJ_BUTTON.x+25,OBJ_BUTTON.y+32); ctx.textAlign='left';
+  // glow pulse on wall around button
+  const wallG=ctx.createRadialGradient(OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,10,OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,80);
+  wallG.addColorStop(0,`rgba(150,80,255,${0.15+btnPulse*0.1})`); wallG.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=wallG; ctx.fillRect(OBJ_BUTTON.x-50,OBJ_BUTTON.y-50,160,160);
+
+  // flying badge
+  if(badgeFlying){
+    ctx.fillStyle='#ffd700'; ctx.fillRect(badgeX,badgeY,22,10);
+    ctx.fillStyle='#1a1a1a'; ctx.font='5px monospace'; ctx.textAlign='center';
+    ctx.fillText('S.S.',badgeX+11,badgeY+7); ctx.textAlign='left';
+    // motion trail
+    ctx.strokeStyle='rgba(255,215,0,0.3)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(N.x+18,N.y+10); ctx.lineTo(badgeX,badgeY); ctx.stroke();
+  }
+
+  // portal opening
+  if(planPhase==='open' && portalR>0){
+    for(let r=5;r>=0;r--){
+      const pr=portalR*(1-r*0.1);
+      const pg=ctx.createRadialGradient(OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,0,OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,pr);
+      pg.addColorStop(0,'rgba(0,0,0,0.9)'); pg.addColorStop(0.5,`rgba(120,0,255,${0.6-r*0.08})`); pg.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(OBJ_BUTTON.x+25,OBJ_BUTTON.y+25,pr,0,Math.PI*2); ctx.fill();
+    }
+    // spiral
+    ctx.strokeStyle='rgba(200,150,255,0.5)'; ctx.lineWidth=2;
+    for(let a=0;a<Math.PI*6;a+=0.2){
+      const r=(a/(Math.PI*6))*portalR;
+      const px=OBJ_BUTTON.x+25+Math.cos(a+ticker*0.05)*r;
+      const py=OBJ_BUTTON.y+25+Math.sin(a+ticker*0.05)*r;
+      ctx.beginPath(); ctx.arc(px,py,1,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  // Prince Time in corner trying to escape
+  dPrinceTime(460,200,'kid');
+  ctx.fillStyle='#f44336'; ctx.font='12px monospace'; ctx.textAlign='center';
+  ctx.fillText('...wait a minute...',480,190); ctx.textAlign='left';
+
+  // Eric limping in corner
+  dEric(E.x,E.y,false,true);
+  dNathan(N.x,N.y);
+
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,200,26);
+  ctx.fillStyle='#7c4dff'; ctx.font='bold 13px monospace'; ctx.fillText('The Portal Plan!',14,27);
+}
+
+function dVictory(){
+  dChamber();
+
+  // big glowing portal
+  const psize=180+Math.sin(ticker*0.06)*10;
+  for(let r=5;r>=0;r--){
+    const pr=psize*(1-r*0.1);
+    const pg=ctx.createRadialGradient(650,280,0,650,280,pr);
+    pg.addColorStop(0,'rgba(0,0,0,0.95)'); pg.addColorStop(0.5,`rgba(100,0,220,${0.6-r*0.08})`); pg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(650,280,pr,0,Math.PI*2); ctx.fill();
+  }
+  ctx.strokeStyle='rgba(200,150,255,0.7)'; ctx.lineWidth=4;
+  ctx.beginPath(); ctx.arc(650,280,psize,0,Math.PI*2); ctx.stroke();
+  // portal spiral
+  ctx.strokeStyle='rgba(200,150,255,0.35)'; ctx.lineWidth=2;
+  for(let a=0;a<Math.PI*8;a+=0.15){
+    const r=(a/(Math.PI*8))*psize;
+    const px=650+Math.cos(a+ticker*0.07)*r;
+    const py=280+Math.sin(a+ticker*0.07)*r;
+    ctx.fillStyle=`rgba(180,100,255,${0.5-a/(Math.PI*16)})`;
+    ctx.beginPath(); ctx.arc(px,py,2,0,Math.PI*2); ctx.fill();
+  }
+
+  if(victoryPhase==='shove'){
+    // Prince Time mid-shove, falling into portal
+    const ptX=580+Math.sin(victoryT*0.1)*5;
+    const ptY=260-victoryT*0.3;
+    const ptA=Math.max(0,1-victoryT/60);
+    ctx.globalAlpha=ptA;
+    dPrinceTime(ptX,ptY,'kid');
+    ctx.globalAlpha=1;
+    if(ptA>0.2){
+      ctx.fillStyle=`rgba(206,147,216,${ptA})`; ctx.font='bold 18px monospace'; ctx.textAlign='center';
+      ctx.fillText('NOOOOOOO!',ptX+22,ptY-20); ctx.textAlign='left';
+    }
+    // Nathan shoving
+    dNathan(480,260);
+  }
+
+  if(victoryPhase==='celebrate'){
+    // portal closed
+    ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(540,100,220,400);
+    ctx.fillStyle='#555'; ctx.font='14px monospace'; ctx.textAlign='center';
+    ctx.fillText('[portal closed]',650,290); ctx.textAlign='left';
+
+    // confetti
+    for(let ci=0;ci<20;ci++){
+      const cx=(ci*87+ticker*2)%800;
+      const cy=((ci*53+ticker*3))%500;
+      ctx.fillStyle=['#ffd700','#00e676','#7c4dff','#ff5722','#00b0ff'][ci%5];
+      ctx.fillRect(cx,cy,8,8);
+    }
+
+    ctx.shadowColor='#ffd700'; ctx.shadowBlur=20;
+    ctx.fillStyle='#ffd700'; ctx.font='bold 34px monospace'; ctx.textAlign='center';
+    ctx.fillText('★ VICTORY! ★',400,160);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#00e676'; ctx.font='18px monospace';
+    ctx.fillText('Prince Time has been defeated!',400,210); ctx.textAlign='left';
+
+    dEric(200,290,false,true);
+    dNathan(270,295);
+    ctx.fillStyle='#ffd700'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
+    ctx.fillText('"Good throw."',240,285);
+    ctx.fillText('"Good plan."',290,278); ctx.textAlign='left';
+  }
+
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,180,26);
+  ctx.fillStyle='#00e676'; ctx.font='bold 13px monospace'; ctx.fillText('Victory!',14,27);
+}
+
+function dContinueScreen(){
+  ctx.fillStyle='#000011'; ctx.fillRect(0,0,800,600);
+  for(let i=0;i<80;i++){
+    const sx=(i*137+50)%800,sy=(i*97+30)%580;
+    ctx.fillStyle=`rgba(255,255,255,${(Math.sin(ticker*0.04+i)*0.4+0.6)*0.7})`;
+    ctx.fillRect(sx,sy,1,1);
+  }
+  ctx.textAlign='center';
+  const pulse=(Math.sin(ticker*0.06)+1)*0.5;
+  ctx.shadowColor='#00e676'; ctx.shadowBlur=20+pulse*10;
+  ctx.fillStyle='#00e676'; ctx.font='bold 30px monospace';
+  ctx.fillText('End of Part 4', 400, 190);
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#ffd700'; ctx.font='18px monospace';
+  ctx.fillText('Up next: Part 5 — Epilogue', 400, 248);
+  ctx.fillStyle='#aaa'; ctx.font='14px monospace';
+  ctx.fillText('Prince Time is gone. The isle is safe.', 400, 295);
+  ctx.fillText('But where did that portal lead...?', 400, 320);
+
+  // Prince Time falling through portal animation
+  const ptFall=(ticker*1.2)%400;
+  ctx.globalAlpha=Math.max(0,1-ptFall/400)*0.8;
+  dPrinceTime(360+Math.sin(ptFall*0.05)*15,260+ptFall*0.5,'kid');
+  ctx.globalAlpha=1;
+  ctx.fillStyle='rgba(100,0,200,0.15)';
+  ctx.beginPath(); ctx.arc(380,260,50+ptFall*0.1,0,Math.PI*2); ctx.fill();
+
+  if(continueT>60 && Math.floor(ticker/15)%2===0){
+    ctx.fillStyle='#fff'; ctx.font='bold 17px monospace';
+    ctx.fillText('► Press E to continue to Part 5 ◄',400,520);
+  }
+  ctx.textAlign='left';
+}
+
+// ── DIALOGUE BOX ──────────────────────────────────────────────
+function dDialogue(){
+  if(!dlgActive) return;
+  ctx.fillStyle='rgba(0,0,0,0.92)'; ctx.fillRect(10,448,780,148);
+  ctx.strokeStyle='#7c4dff'; ctx.lineWidth=2; ctx.strokeRect(10,448,780,148);
+  ctx.fillStyle='#7c4dff'; ctx.fillRect(10,448,780,4);
+  ctx.fillStyle='#fff'; ctx.font='16px monospace';
+  const line=dlgLines[dlgPage]||'';
+  const words=line.split(' ');
+  let ly=480,lt='';
+  for(const w of words){
+    const test=lt+(lt?' ':'')+w;
+    if(ctx.measureText(test).width>740){ctx.fillText(lt,24,ly); ly+=24; lt=w;}
+    else lt=test;
+  }
+  if(lt) ctx.fillText(lt,24,ly);
+  ctx.fillStyle='#555'; ctx.font='12px monospace';
+  ctx.fillText(`${dlgPage+1}/${dlgLines.length}`,24,584);
+  if(Math.floor(ticker/12)%2===0){ctx.fillStyle='#ffd700'; ctx.font='bold 12px monospace'; ctx.textAlign='right'; ctx.fillText('E / Space ▶',780,584); ctx.textAlign='left';}
+}
+
+function dControls(){
+  if(scene==='title'||scene==='continue'||scene==='battle'||scene==='shadow_transform'||scene==='explosion') return;
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(8,8,238,26);
+  ctx.fillStyle='#555'; ctx.font='12px monospace';
+  ctx.fillText('Move: WASD/Arrows  |  Act: E',14,27);
+}
+
+// ── MUSIC ─────────────────────────────────────────────────────
+(function(){
+  let ac;
+  try{ac=new(window.AudioContext||window.webkitAudioContext)();}catch(e){return;}
+  function note(f,t,d,type,v){
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.type=type||'square'; o.frequency.value=f;
+    g.gain.setValueAtTime(v||0.04,ac.currentTime+t);
+    g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+t+d);
+    o.start(ac.currentTime+t); o.stop(ac.currentTime+t+d+0.01);
+  }
+  const B=0.15;
+  // faster, more intense — boss fight energy
+  const mel=[
+    [523,0],[587,1],[659,2],[784,3],[740,4],[659,5],[587,6],[659,7],
+    [784,8],[880,9],[988,10],[880,11],[784,12],[740,13],[659,14],[587,15],
+    [659,16],[740,17],[784,18],[880,19],[988,20],[880,21],[784,22],[740,23],
+    [784,24],[880,25],[784,26],[740,27],[659,28],[587,29],[523,30],[494,31],
+  ];
+  const bass=[262,262,294,262,294,330,294,262];
+  function loop(){
+    mel.forEach(([f,b])=>note(f,b*B,B*0.6,'square',0.03));
+    bass.forEach((f,i)=>note(f,i*B*4,B*3.2,'triangle',0.048));
+    setTimeout(loop,32*B*1000*0.96);
+  }
+  const go=()=>{if(ac.state==='suspended')ac.resume(); loop();};
+  document.addEventListener('keydown',go,{once:true});
+  canvas.addEventListener('touchstart',go,{once:true,passive:true});
+})();
+
+// ── GAME LOOP ─────────────────────────────────────────────────
+(function loop(){
+  ticker++;
+  if(sceneLabel>0) sceneLabel--;
+
+  if(dlgActive){
+    const ed=keys['e']||keys['E']||keys[' '];
+    if(ed&&!eDown) advanceDlg();
+    eDown=ed;
+  } else {
+    eDown=false;
+    if(scene==='title')          uTitle();
+    if(scene==='shadow_transform')uTransform();
+    if(scene==='prince_reveal')  uReveal();
+    if(scene==='battle')         uBattle();
+    if(scene==='explosion')      uExplosion();
+    if(scene==='portal_plan')    uPlan();
+    if(scene==='victory')        uVictory();
+    if(scene==='continue')       uContinue();
+  }
+
+  ctx.clearRect(0,0,800,600);
+  ctx.textAlign='left';
+
+  if(scene==='title')           dTitle();
+  if(scene==='shadow_transform')dTransform();
+  if(scene==='prince_reveal')   dReveal();
+  if(scene==='battle')          dBattle();
+  if(scene==='explosion')       dExplosion();
+  if(scene==='portal_plan')     dPlan();
+  if(scene==='victory')         dVictory();
+  if(scene==='continue')        dContinueScreen();
+
+  dDialogue();
+  dControls();
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
