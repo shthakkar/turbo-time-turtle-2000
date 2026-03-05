@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Turbo Time Turtle 2000 — Chapter 3, Part 1</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  * { box-sizing: border-box; touch-action: none; }
+  body { margin: 0; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100dvh; overflow: hidden; }
+  #game-wrapper { position: relative; }
+  canvas { display: block; border: 2px solid #444; max-width: 100%; }
+  #touch-controls { display: none; width: 100%; max-width: 800px; background: #111; padding: 8px 16px; }
+  @media (pointer: coarse) { #touch-controls { display: flex; justify-content: space-between; align-items: center; } }
+  #dpad { display: grid; grid-template-columns: 44px 44px 44px; grid-template-rows: 44px 44px 44px; gap: 4px; }
+  .dpad-btn { background: #222; border: 2px solid #444; border-radius: 8px; color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .dpad-btn:active { background: #444; }
+  #dpad-empty { background: transparent; border: none; }
+  #btn-e { width: 80px; height: 80px; border-radius: 50%; background: #1a1a3a; border: 3px solid #7c4dff; color: #7c4dff; font-size: 22px; font-weight: bold; font-family: monospace; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; }
+  #btn-e:active { background: #2a2a5a; }
+</style>
+</head>
+<body>
+<div id="game-wrapper">
+  <canvas id="game" width="800" height="600"></canvas>
+</div>
+<div id="touch-controls">
+  <div id="dpad">
+    <div></div><div class="dpad-btn" id="btn-up">▲</div><div></div>
+    <div class="dpad-btn" id="btn-left">◀</div><div id="dpad-empty"></div><div class="dpad-btn" id="btn-right">▶</div>
+    <div></div><div class="dpad-btn" id="btn-down">▼</div><div></div>
+  </div>
+  <div id="btn-e">E</div>
+</div>
+
+<script>
+// ── CANVAS RESIZE ─────────────────────────────────────────────
+function resizeCanvas() {
+  const ctrl = document.getElementById('touch-controls');
+  const mob = window.matchMedia('(pointer: coarse)').matches;
+  const ch = mob ? (ctrl.offsetHeight || 120) : 0;
+  const s = Math.min(window.innerWidth / 800, (window.innerHeight - ch) / 600);
+  const c = document.getElementById('game');
+  c.style.width = Math.floor(800 * s) + 'px';
+  c.style.height = Math.floor(600 * s) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+</script>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+
+// ── INPUT ─────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+document.addEventListener('keyup',   e => { keys[e.key] = false; });
+
+function touchKey(k, d) { keys[k] = d; }
+function bindTouch(id, key) {
+  const el = document.getElementById(id); if (!el) return;
+  el.addEventListener('touchstart',  e => { e.preventDefault(); touchKey(key, true);  }, { passive: false });
+  el.addEventListener('touchend',    e => { e.preventDefault(); touchKey(key, false); }, { passive: false });
+  el.addEventListener('touchcancel', e => { e.preventDefault(); touchKey(key, false); }, { passive: false });
+  el.addEventListener('mousedown',   () => touchKey(key, true));
+  el.addEventListener('mouseup',     () => touchKey(key, false));
+  el.addEventListener('mouseleave',  () => touchKey(key, false));
+}
+bindTouch('btn-up','ArrowUp'); bindTouch('btn-down','ArrowDown');
+bindTouch('btn-left','ArrowLeft'); bindTouch('btn-right','ArrowRight');
+bindTouch('btn-e','e');
+canvas.addEventListener('touchend', e => { e.preventDefault(); if (dlgActive) advanceDlg(); }, { passive: false });
+
+// ── GLOBAL STATE ──────────────────────────────────────────────
+let scene      = 'title';
+let ticker     = 0;
+let eDown      = false;
+let sceneLabel = 0;
+
+// Dialogue
+let dlgActive = false, dlgLines = [], dlgPage = 0, dlgCb = null;
+
+// Eric
+const E = { x: 380, y: 260, w: 40, h: 56, spd: 3 };
+// Nathan
+const N = { x: 440, y: 265, w: 36, h: 52 };
+
+// ── SCENE-SPECIFIC STATE ──────────────────────────────────────
+let titleT = 0;
+
+// hq_train
+let trainPhase = 'walk'; // walk | done
+let punchBagHit = false;
+const OBJ_PUNCHBAG = { x: 600, y: 200, w: 48, h: 90 };
+let punchFlash = 0;
+
+// hq_ceremony
+let ceremonyPhase = 'intro'; // intro | explore | done
+let trophyRead = { trophy1: false, trophy2: false, plaque: false };
+let trophyCount = 0;
+const OBJ_TROPHY1 = { x: 100, y: 180, w: 40, h: 60 };
+const OBJ_TROPHY2 = { x: 200, y: 190, w: 40, h: 55 };
+const OBJ_PLAQUE  = { x: 340, y: 160, w: 120, h: 50 };
+const OBJ_MISSIONBOARD = { x: 580, y: 140, w: 160, h: 200 };
+
+// mission
+let missionPhase = 'read'; // read | done
+
+// seymour
+let seymourPhase = 'meet'; // meet | done
+const OBJ_SEYMOUR = { x: 500, y: 250, w: 36, h: 52 };
+
+// plane_board
+let planeBoardPhase = 'walk'; // walk | done
+let planeT = 0;
+const OBJ_PLANE = { x: 100, y: 150, w: 280, h: 180 };
+
+// continue screen
+let continueT = 0;
+
+// ── HELPERS ───────────────────────────────────────────────────
+function dlg(lines, cb) {
+  dlgLines = lines; dlgPage = 0; dlgActive = true; dlgCb = cb || null;
+}
+function advanceDlg() {
+  dlgPage++;
+  if (dlgPage >= dlgLines.length) {
+    dlgActive = false;
+    const cb = dlgCb; dlgCb = null;
+    if (cb) cb();
+  }
+}
+
+function distC(a, b) {
+  return Math.hypot((a.x+a.w/2) - (b.x+b.w/2), (a.y+a.h/2) - (b.y+b.h/2));
+}
+function near(a, b, d) { return distC(a, b) < d; }
+
+function collide(ax,ay,aw,ah, bx,by,bw,bh) {
+  return ax<bx+bw && ax+aw>bx && ay<by+bh && ay+ah>by;
+}
+function moveE(obs) {
+  let dx=0, dy=0;
+  if (keys['ArrowLeft'] ||keys['a']||keys['A']) dx = -E.spd;
+  if (keys['ArrowRight']||keys['d']||keys['D']) dx =  E.spd;
+  if (keys['ArrowUp']   ||keys['w']||keys['W']) dy = -E.spd;
+  if (keys['ArrowDown'] ||keys['s']||keys['S']) dy =  E.spd;
+  let nx = Math.max(4,  Math.min(756, E.x + dx));
+  let ny = Math.max(60, Math.min(390, E.y + dy));
+  for (const o of obs) { if (collide(nx,E.y,E.w,E.h,o.x,o.y,o.w,o.h)) nx = E.x; }
+  for (const o of obs) { if (collide(E.x,ny,E.w,E.h,o.x,o.y,o.w,o.h)) ny = E.y; }
+  E.x = nx; E.y = ny;
+}
+
+// ── SCENE TRANSITIONS ─────────────────────────────────────────
+function goTitle() {
+  scene = 'title'; titleT = 0;
+}
+function goTrain() {
+  scene = 'hq_train'; sceneLabel = 180;
+  trainPhase = 'walk'; punchBagHit = false; punchFlash = 0;
+  E.x = 100; E.y = 280; N.x = 160; N.y = 285;
+  dlg([
+    'CHAPTER 3: The Lost Isle',
+    'Previously: Eric joined The Time Squad!',
+    '"Time to get some SERIOUS training in." said Eric.',
+    '"Today we practice at the HQ gym." said Nathan.',
+    '[ Walk to the PUNCH BAG and press E! ]',
+  ]);
+}
+function goCeremony() {
+  scene = 'hq_ceremony'; sceneLabel = 180;
+  ceremonyPhase = 'intro';
+  trophyRead = { trophy1: false, trophy2: false, plaque: false };
+  trophyCount = 0;
+  E.x = 380; E.y = 280; N.x = 440; N.y = 285;
+  dlg([
+    'After training, Ben called them to the main hall.',
+    '"We have something important to share." said Ben.',
+    'The hall was filled with trophies and medals.',
+    'Eric looked around, amazed.',
+    '"Wow. We have done a LOT." said Nathan.',
+    '[ Explore the hall! Check out the trophies and plaque. ]',
+  ], () => { ceremonyPhase = 'explore'; });
+}
+function goMission() {
+  scene = 'mission'; sceneLabel = 120;
+  missionPhase = 'read';
+  E.x = 380; E.y = 280; N.x = 320; N.y = 285;
+  dlg([
+    '"There is a new mission." said Ben, gravely.',
+    '"A distress signal — from a place called The Lost Isle."',
+    '"Nobody who has gone there has ever come back."',
+    '"Which is why WE are going." said Nathan, confidently.',
+    '"Wait — WHAT?!" said Eric.',
+    '"Don\'t worry," said Nathan. "We\'ll be FINE."',
+    '"Famous last words." said Eric.',
+    '[ Walk to the MISSION BOARD and press E to read the briefing. ]',
+  ]);
+}
+function goSeymour() {
+  scene = 'seymour'; sceneLabel = 180;
+  seymourPhase = 'meet';
+  E.x = 200; E.y = 280; N.x = 270; N.y = 285;
+  dlg([
+    'They headed to the airport to meet their guide.',
+    '"This guy is supposed to know The Lost Isle." said Ben.',
+    'A man in a wrinkled suit was leaning against the wall.',
+    'He had a suitcase, a coffee, and a very sour face.',
+    '"Are you... Seymour?" said Eric.',
+    '"Obviously." said Seymour, not even looking up.',
+    '"Nice to meet you too." said Eric, quietly.',
+    '[ Walk up to Seymour and press E to talk to him. ]',
+  ]);
+}
+function goPlaneBoard() {
+  scene = 'plane_board'; sceneLabel = 120;
+  planeBoardPhase = 'walk'; planeT = 0;
+  E.x = 600; E.y = 300; N.x = 650; N.y = 305;
+  dlg([
+    'They found the gate. The sign read:',
+    '"CHEAP GREMLIN AIRLINES — Gate 13."',
+    '"Gate 13?" said Eric. "That doesn\'t feel lucky."',
+    '"It\'s fine." said Seymour, boarding immediately.',
+    '"...He didn\'t wait for us." said Nathan.',
+    '[ Walk to the PLANE and press E to board! ]',
+  ]);
+}
+function goContinue() {
+  scene = 'continue'; continueT = 0;
+}
+
+// ── UPDATE ────────────────────────────────────────────────────
+function update() {
+  ticker++;
+  if (sceneLabel > 0) sceneLabel--;
+
+  if (dlgActive) {
+    const ed = keys['e']||keys['E']||keys[' '];
+    if (ed && !eDown) advanceDlg();
+    eDown = ed; return;
+  }
+  eDown = false;
+
+  if (scene === 'title')      uTitle();
+  if (scene === 'hq_train')   uTrain();
+  if (scene === 'hq_ceremony')uCeremony();
+  if (scene === 'mission')    uMission();
+  if (scene === 'seymour')    uSeymour();
+  if (scene === 'plane_board')uPlaneBoard();
+  if (scene === 'continue')   uContinue();
+}
+
+function uTitle() {
+  titleT++;
+  const ed = keys['e']||keys['E']||keys[' '];
+  if ((ed && !eDown) || titleT > 360) { eDown = true; goTrain(); }
+}
+
+function uTrain() {
+  moveE([OBJ_PUNCHBAG]);
+  N.x += (E.x - 60 - N.x) * 0.06;
+  N.y += (E.y - N.y) * 0.06;
+  if (punchFlash > 0) punchFlash--;
+
+  if (!punchBagHit && near(E, OBJ_PUNCHBAG, 90)) {
+    if (keys['e']||keys['E']) {
+      eDown = true; punchBagHit = true; punchFlash = 30;
+      dlg([
+        'WHAM! Eric punched the bag with his nunchucks!',
+        'ZAP! A burst of electric energy flew off!',
+        '"Nice hit!" said Nathan.',
+        '"Thanks." said Eric. "I\'ve been practising."',
+        '"I can tell." said Nathan.',
+        'Just then — Ben walked in with a serious look.',
+        '"Boys. Come to the main hall. We need to talk."',
+      ], () => { goCeremony(); });
+    }
+  }
+}
+
+function uCeremony() {
+  if (ceremonyPhase !== 'explore') return;
+  moveE([]);
+  N.x += (E.x + 60 - N.x) * 0.05;
+  N.y += (E.y - N.y) * 0.05;
+
+  const items = [
+    { key: 'trophy1', obj: OBJ_TROPHY1, lines: [
+      '"World\'s Best Time Traveller — Eric & Nathan, 2024"',
+      '"Wow," said Eric. "We really did that."',
+      '"Keep reading." said Nathan.',
+    ]},
+    { key: 'trophy2', obj: OBJ_TROPHY2, lines: [
+      '"Defeated Lord Time — Twice!" reads the plaque.',
+      '"TWICE?" said Eric. "Wait, did we defeat him twice?"',
+      '"Well... he did get regenerated once." said Nathan. "So... yes."',
+    ]},
+    { key: 'plaque', obj: OBJ_PLAQUE, lines: [
+      'The plaque reads: "THE TIME SQUAD"',
+      '"Heroes of Past, Present and Future."',
+      '"That\'s us!" said Eric. He felt pretty good about that.',
+    ]},
+  ];
+
+  for (const item of items) {
+    if (!trophyRead[item.key] && near(E, item.obj, 80)) {
+      if (keys['e']||keys['E']) {
+        eDown = true;
+        dlg(item.lines, () => {
+          trophyRead[item.key] = true; trophyCount++;
+          if (trophyCount === 3) {
+            dlg([
+              '"Okay, enough nostalgia." said Ben, stepping forward.',
+              '"We have received a distress signal."',
+              '"A very strange one." He looked serious.',
+              '"Come. I will explain."',
+            ], () => { goMission(); });
+          }
+        });
+        break;
+      }
+    }
+  }
+}
+
+function uMission() {
+  moveE([OBJ_MISSIONBOARD]);
+  N.x += (E.x - 60 - N.x) * 0.05;
+  N.y += (E.y - N.y) * 0.05;
+
+  if (missionPhase === 'read' && near(E, OBJ_MISSIONBOARD, 100)) {
+    if (keys['e']||keys['E']) {
+      eDown = true; missionPhase = 'done';
+      dlg([
+        '[ MISSION BRIEFING ]',
+        'Target: The Lost Isle.',
+        'Last known contact: 3 months ago.',
+        'Reports of strange creatures and disappearing citizens.',
+        '"The air may be dangerous." said Ben. "Take precautions."',
+        '"How do we get there?" said Eric.',
+        '"Cheap Gremlin Airlines." said Nathan.',
+        '"...Is that a real airline?" said Eric.',
+        '"It\'s the only one that flies there." said Nathan.',
+        '"Great." said Eric. "Just great."',
+        'Their guide, a man named Seymour, was waiting at the airport.',
+      ], () => { goSeymour(); });
+    }
+  }
+}
+
+function uSeymour() {
+  moveE([OBJ_SEYMOUR]);
+  N.x += (E.x - 60 - N.x) * 0.05;
+  N.y += (E.y - N.y) * 0.05;
+
+  if (seymourPhase === 'meet' && near(E, OBJ_SEYMOUR, 90)) {
+    if (keys['e']||keys['E']) {
+      eDown = true; seymourPhase = 'done';
+      dlg([
+        '"So," said Eric. "You know The Lost Isle?"',
+        '"Been there once." said Seymour, flatly. "Terrible place."',
+        '"What\'s it like?" said Nathan.',
+        '"Poisonous air. Strange noises. Things that shouldn\'t exist."',
+        '"Cool." said Nathan.',
+        '"Not COOL." said Seymour.',
+        '"We\'ll be fine," said Eric. "We\'ve done worse."',
+        '"Sure you have, kid." said Seymour, clearly not believing him.',
+        '"Our flight is boarding." said Nathan. "Gate 13."',
+        '"Of course it is." said Eric.',
+      ], () => { goPlaneBoard(); });
+    }
+  }
+}
+
+function uPlaneBoard() {
+  moveE([]);
+  N.x += (E.x + 50 - N.x) * 0.05;
+  N.y += (E.y - N.y) * 0.05;
+  planeT++;
+
+  if (planeBoardPhase === 'walk' && near(E, OBJ_PLANE, 100)) {
+    if (keys['e']||keys['E']) {
+      eDown = true; planeBoardPhase = 'done';
+      dlg([
+        'They stepped onto the plane.',
+        'It was very small. And very old.',
+        'The seats were held together with duct tape.',
+        '"Is this safe?!" said Eric.',
+        '"Probably." said Seymour, already in his seat with his eyes closed.',
+        '"PROBABLY?!" said Eric.',
+        '"Buckle up." said Nathan. "Adventure awaits!"',
+        'The engines sputtered... and the plane took off.',
+        'Eric looked out the window.',
+        '"Here we go." he said.',
+      ], () => { goContinue(); });
+    }
+  }
+}
+
+function uContinue() {
+  continueT++;
+  const ed = keys['e']||keys['E']||keys[' '];
+  if (continueT > 60 && (ed && !eDown)) {
+    window.location.href = 'ch3-part2.html';
+  }
+  // also allow click
+}
+
+// ── DRAW ──────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, 800, 600);
+  ctx.textAlign = 'left';
+
+  if (scene === 'title')       dTitle();
+  if (scene === 'hq_train')    dTrain();
+  if (scene === 'hq_ceremony') dCeremony();
+  if (scene === 'mission')     dMission();
+  if (scene === 'seymour')     dSeymour();
+  if (scene === 'plane_board') dPlaneBoard();
+  if (scene === 'continue')    dContinueScreen();
+
+  dDialogue();
+  dControls();
+}
+
+// ── CHARACTER SPRITES ─────────────────────────────────────────
+function dEric(x, y, label) {
+  ctx.fillStyle='rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(x+20,y+58,18,6,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#212121'; ctx.fillRect(x+2,y+47,18,9); ctx.fillRect(x+20,y+47,18,9);
+  ctx.fillStyle='#1a237e'; ctx.fillRect(x+4,y+32,15,17); ctx.fillRect(x+21,y+32,15,17);
+  ctx.fillStyle='#bf360c'; ctx.fillRect(x+3,y+30,34,5);
+  ctx.fillStyle='#1565c0'; ctx.fillRect(x+2,y+18,36,14);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-5,y+18,9,18); ctx.fillRect(x+36,y+18,9,18);
+  ctx.fillStyle='#ffb74d'; ctx.fillRect(x-5,y+33,9,5); ctx.fillRect(x+36,y+33,9,5);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+16,y+14,8,6);
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+20,y+12,14,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#4e342e';
+  ctx.beginPath(); ctx.arc(x+20,y+6,14,Math.PI,0); ctx.fill();
+  ctx.fillRect(x+6,y,28,8);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x+14,y+12,4,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+26,y+12,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a237e'; ctx.beginPath(); ctx.arc(x+15,y+12,2,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+27,y+12,2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#4e342e'; ctx.fillRect(x+10,y+7,8,2); ctx.fillRect(x+22,y+7,8,2);
+  ctx.strokeStyle='#5d4037'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(x+20,y+16,4,0.15,Math.PI-0.15); ctx.stroke();
+  if (label && sceneLabel>0 && Math.floor(ticker/12)%2===0) {
+    ctx.fillStyle='#ffd700'; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+    ctx.fillText('▼ YOU (ERIC)', x+20, y-8);
+    ctx.textAlign='left';
+  }
+}
+
+function dNathan(x, y) {
+  ctx.fillStyle='rgba(0,0,0,0.15)';
+  ctx.beginPath(); ctx.ellipse(x+18,y+53,16,5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2e7d32'; ctx.fillRect(x+2,y+17,32,13);
+  ctx.fillStyle='#37474f'; ctx.fillRect(x+3,y+29,13,15); ctx.fillRect(x+20,y+29,13,15);
+  ctx.fillStyle='#1b5e20'; ctx.fillRect(x+2,y+44,15,8); ctx.fillRect(x+19,y+44,15,8);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-4,y+17,8,16); ctx.fillRect(x+32,y+17,8,16);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+14,y+13,8,6);
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+18,y+11,12,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#f9a825';
+  ctx.beginPath(); ctx.arc(x+18,y+5,12,Math.PI,0); ctx.fill();
+  ctx.fillRect(x+6,y,24,7);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x+12,y+11,3.5,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+24,y+11,3.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1565c0'; ctx.beginPath(); ctx.arc(x+13,y+11,1.8,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+25,y+11,1.8,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#f9a825'; ctx.fillRect(x+9,y+7,7,2); ctx.fillRect(x+21,y+7,7,2);
+}
+
+function dBen(x, y) {
+  ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(x+20,y+58,18,5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#212121'; ctx.fillRect(x+2,y+47,18,9); ctx.fillRect(x+20,y+47,18,9);
+  ctx.fillStyle='#263238'; ctx.fillRect(x+4,y+32,15,17); ctx.fillRect(x+21,y+32,15,17);
+  ctx.fillStyle='#1a237e'; ctx.fillRect(x+2,y+18,36,14); ctx.fillRect(x+2,y+28,36,6);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-5,y+18,9,18); ctx.fillRect(x+36,y+18,9,18);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+16,y+14,8,6);
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+20,y+12,14,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#546e7a';
+  ctx.beginPath(); ctx.arc(x+20,y+5,14,Math.PI,0); ctx.fill();
+  ctx.fillRect(x+6,y,28,8);
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x+14,y+12,4,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+26,y+12,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#333'; ctx.beginPath(); ctx.arc(x+15,y+12,2,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(x+27,y+12,2,0,Math.PI*2); ctx.fill();
+}
+
+// Seymour — grumpy man in wrinkled suit
+function dSeymour(x, y) {
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(x+18,y+54,16,5,0,0,Math.PI*2); ctx.fill();
+  // shoes
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(x+1,y+46,16,9); ctx.fillRect(x+19,y+46,16,9);
+  // pants — grey
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x+3,y+30,13,18); ctx.fillRect(x+20,y+30,13,18);
+  // jacket — dark grey, wrinkled
+  ctx.fillStyle='#455a64'; ctx.fillRect(x+1,y+16,34,16);
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x+1,y+16,8,16); ctx.fillRect(x+27,y+16,8,16);
+  // tie — brown
+  ctx.fillStyle='#8d6e63'; ctx.fillRect(x+15,y+17,6,12);
+  // arms
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x-4,y+16,8,18); ctx.fillRect(x+32,y+16,8,18);
+  // hands — slightly annoyed position (arms crossed vibe)
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-4,y+31,8,5); ctx.fillRect(x+32,y+31,8,5);
+  // neck
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+14,y+12,8,6);
+  // head
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+18,y+10,13,0,Math.PI*2); ctx.fill();
+  // receding grey hair
+  ctx.fillStyle='#90a4ae';
+  ctx.beginPath(); ctx.arc(x+18,y+4,13,Math.PI,0); ctx.fill();
+  ctx.fillRect(x+5,y-2,8,7);
+  ctx.fillRect(x+23,y-2,8,7);
+  // eyes — narrow/grumpy
+  ctx.fillStyle='#fff'; ctx.fillRect(x+9,y+9,7,4); ctx.fillRect(x+22,y+9,7,4);
+  ctx.fillStyle='#333'; ctx.fillRect(x+11,y+10,3,3); ctx.fillRect(x+24,y+10,3,3);
+  // frown brows
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x+9,y+6,7,2); ctx.fillRect(x+22,y+7,7,2);
+  // frown mouth
+  ctx.strokeStyle='#5d4037'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(x+18,y+19,4,Math.PI+0.2,2*Math.PI-0.2); ctx.stroke();
+  // coffee cup
+  ctx.fillStyle='#795548'; ctx.fillRect(x+36,y+28,14,14);
+  ctx.fillStyle='#fff'; ctx.fillRect(x+38,y+30,10,10);
+  ctx.fillStyle='#4e342e'; ctx.fillRect(x+40,y+32,6,6);
+  ctx.strokeStyle='#795548'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x+50,y+32); ctx.quadraticCurveTo(x+56,y+32,x+56,y+38); ctx.quadraticCurveTo(x+56,y+42,x+50,y+42); ctx.stroke();
+}
+
+// ── GLOW ──────────────────────────────────────────────────────
+function glow(obj, nearDist) {
+  if (!near(E, obj, nearDist)) return;
+  const a=(Math.sin(ticker*0.12)+1)*0.5*0.35+0.15;
+  ctx.fillStyle=`rgba(255,215,0,${a})`;
+  ctx.fillRect(obj.x-6, obj.y-6, obj.w+12, obj.h+12);
+  ctx.strokeStyle=`rgba(255,215,0,${a+0.3})`; ctx.lineWidth=3;
+  ctx.strokeRect(obj.x-6, obj.y-6, obj.w+12, obj.h+12);
+  if (!dlgActive) {
+    const ey=obj.y-28+Math.sin(ticker*0.1)*5;
+    ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(obj.x+obj.w/2-20,ey-14,40,18);
+    ctx.fillStyle='#ffd700'; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+    ctx.fillText('[E]', obj.x+obj.w/2, ey); ctx.textAlign='left';
+  }
+}
+
+// ── BACKGROUND HELPERS ────────────────────────────────────────
+function dRoom() {
+  ctx.fillStyle='#ede0c8'; ctx.fillRect(0,0,800,600);
+  ctx.strokeStyle='rgba(180,140,90,0.25)'; ctx.lineWidth=1;
+  for (let x=0;x<800;x+=40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,420); ctx.stroke(); }
+  ctx.fillStyle='#c8956c'; ctx.fillRect(0,420,800,180);
+  ctx.strokeStyle='rgba(100,55,20,0.3)'; ctx.lineWidth=1.5;
+  for (let x=0;x<800;x+=80) { ctx.beginPath(); ctx.moveTo(x,420); ctx.lineTo(x,600); ctx.stroke(); }
+  for (let y=440;y<600;y+=40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(800,y); ctx.stroke(); }
+  ctx.fillStyle='#a06040'; ctx.fillRect(0,420,800,10);
+  ctx.fillStyle='#f5e8d0'; ctx.fillRect(0,0,800,55);
+  ctx.fillStyle='#d0a870'; ctx.fillRect(0,52,800,8);
+}
+
+// HQ room with gym equipment
+function dHQRoom() {
+  // dark blue/grey walls
+  ctx.fillStyle='#1a237e'; ctx.fillRect(0,0,800,600);
+  ctx.fillStyle='#283593'; ctx.fillRect(0,0,800,420);
+  // grid lines on wall
+  ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=1;
+  for (let x=0;x<800;x+=50) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,420); ctx.stroke(); }
+  for (let y=0;y<420;y+=50) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(800,y); ctx.stroke(); }
+  // floor
+  ctx.fillStyle='#263238'; ctx.fillRect(0,420,800,180);
+  ctx.strokeStyle='rgba(100,200,255,0.1)'; ctx.lineWidth=2;
+  for (let x=0;x<800;x+=100) { ctx.beginPath(); ctx.moveTo(x,420); ctx.lineTo(x,600); ctx.stroke(); }
+  // baseboard glow strip
+  ctx.fillStyle='rgba(0,150,255,0.2)'; ctx.fillRect(0,418,800,6);
+  // Time Squad logo on wall
+  ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.font='bold 90px monospace'; ctx.textAlign='center';
+  ctx.fillText('T.S.', 400, 260);
+  ctx.textAlign='left';
+  // HQ label
+  ctx.fillStyle='rgba(0,200,255,0.5)'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
+  ctx.fillText('TIME SQUAD HQ', 400, 30);
+  ctx.textAlign='left';
+}
+
+// ── SCENE DRAWS ───────────────────────────────────────────────
+function dTitle() {
+  ctx.fillStyle='#000011'; ctx.fillRect(0,0,800,600);
+  for (let i=0;i<90;i++) {
+    const sx=(i*137+50)%800, sy=(i*97+30)%580;
+    const bright=Math.sin(ticker*0.03+i)*0.4+0.6;
+    ctx.fillStyle=`rgba(255,255,255,${bright})`;
+    ctx.fillRect(sx, sy, 1+(i%5===0?1:0), 1+(i%5===0?1:0));
+  }
+  ctx.textAlign='center';
+  ctx.shadowColor='#7c4dff'; ctx.shadowBlur=30;
+  ctx.fillStyle='#7c4dff'; ctx.font='bold 46px monospace'; ctx.fillText('TURBO TIME TURTLE 2000',400,120);
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#00e676'; ctx.font='bold 28px monospace'; ctx.fillText('Chapter 3',400,172);
+  ctx.fillStyle='#ffd700'; ctx.font='20px monospace'; ctx.fillText('The Lost Isle',400,212);
+  ctx.fillStyle='#ff9800'; ctx.font='bold 17px monospace'; ctx.fillText('Part 1 — HQ & The Mission',400,248);
+  ctx.fillStyle='#aaa'; ctx.font='15px monospace'; ctx.fillText('A story by Samarth Thakkar',400,285);
+  ctx.fillStyle='#555'; ctx.font='13px monospace'; ctx.fillText('Controls: WASD / Arrow keys to move,  E to interact',400,360);
+  ctx.fillStyle='#fff'; ctx.font='17px monospace';
+  if (Math.floor(ticker/15)%2===0) ctx.fillText('► Press E or Space to Start ◄',400,420);
+  ctx.textAlign='left';
+}
+
+function dTrain() {
+  dHQRoom();
+
+  // Gym equipment background
+  // Weight rack on left
+  ctx.fillStyle='#37474f'; ctx.fillRect(60,200,80,120);
+  ctx.fillStyle='#455a64'; ctx.fillRect(62,202,76,8);
+  for (let i=0;i<3;i++) {
+    ctx.fillStyle='#546e7a'; ctx.fillRect(68,218+i*32,64,20);
+    ctx.fillStyle='#78909c'; ctx.fillRect(70,220+i*32,60,8);
+  }
+  ctx.fillStyle='#aaa'; ctx.font='11px monospace'; ctx.textAlign='center';
+  ctx.fillText('WEIGHTS',100,200); ctx.textAlign='left';
+
+  // Punch bag
+  if (punchFlash > 0) {
+    const fa = punchFlash/30;
+    ctx.fillStyle=`rgba(255,200,0,${fa*0.5})`; ctx.fillRect(OBJ_PUNCHBAG.x-10,OBJ_PUNCHBAG.y-10,OBJ_PUNCHBAG.w+20,OBJ_PUNCHBAG.h+20);
+    ctx.fillStyle='#ffd700'; ctx.font='bold 24px monospace'; ctx.textAlign='center';
+    ctx.fillText('⚡ ZAP!', OBJ_PUNCHBAG.x+24, OBJ_PUNCHBAG.y-20);
+    ctx.textAlign='left';
+  }
+  // chain
+  ctx.strokeStyle='#555'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(OBJ_PUNCHBAG.x+24,0); ctx.lineTo(OBJ_PUNCHBAG.x+24,OBJ_PUNCHBAG.y); ctx.stroke();
+  // bag body
+  const bagSwing = punchFlash>0 ? Math.sin(punchFlash*0.4)*8 : 0;
+  ctx.fillStyle=punchBagHit?'#795548':'#8d4515';
+  ctx.beginPath();
+  ctx.roundRect(OBJ_PUNCHBAG.x+bagSwing, OBJ_PUNCHBAG.y, OBJ_PUNCHBAG.w, OBJ_PUNCHBAG.h, 12);
+  ctx.fill();
+  ctx.fillStyle='#a1887f';
+  ctx.fillRect(OBJ_PUNCHBAG.x+bagSwing+8, OBJ_PUNCHBAG.y+10, OBJ_PUNCHBAG.w-16, 12);
+  ctx.fillRect(OBJ_PUNCHBAG.x+bagSwing+8, OBJ_PUNCHBAG.y+36, OBJ_PUNCHBAG.w-16, 12);
+  ctx.fillRect(OBJ_PUNCHBAG.x+bagSwing+8, OBJ_PUNCHBAG.y+62, OBJ_PUNCHBAG.w-16, 12);
+
+  if (!punchBagHit) glow(OBJ_PUNCHBAG, 100);
+
+  // HUD
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,220,26);
+  ctx.fillStyle='#00e5ff'; ctx.font='bold 13px monospace'; ctx.fillText('TIME SQUAD HQ — Training Room',14,27);
+
+  dNathan(N.x, N.y);
+  dEric(E.x, E.y, true);
+}
+
+function dCeremony() {
+  dHQRoom();
+
+  // Trophy shelf
+  ctx.fillStyle='#5d4037'; ctx.fillRect(60,240,380,16);
+  ctx.fillStyle='#6d4c41'; ctx.fillRect(60,256,380,8);
+
+  // Trophy 1
+  glow(OBJ_TROPHY1, 80);
+  ctx.fillStyle=trophyRead.trophy1?'#aaa':'#ffd700';
+  ctx.fillRect(OBJ_TROPHY1.x+10,OBJ_TROPHY1.y,20,40);
+  ctx.beginPath(); ctx.arc(OBJ_TROPHY1.x+20,OBJ_TROPHY1.y+8,16,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#5d4037'; ctx.fillRect(OBJ_TROPHY1.x+5,OBJ_TROPHY1.y+38,30,10);
+  ctx.fillStyle='#333'; ctx.font='9px monospace'; ctx.textAlign='center';
+  ctx.fillText('TROPHY 1',OBJ_TROPHY1.x+20,OBJ_TROPHY1.y+58); ctx.textAlign='left';
+
+  // Trophy 2
+  glow(OBJ_TROPHY2, 80);
+  ctx.fillStyle=trophyRead.trophy2?'#aaa':'#ffd700';
+  ctx.fillRect(OBJ_TROPHY2.x+10,OBJ_TROPHY2.y,20,35);
+  ctx.beginPath(); ctx.arc(OBJ_TROPHY2.x+20,OBJ_TROPHY2.y+8,14,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#5d4037'; ctx.fillRect(OBJ_TROPHY2.x+5,OBJ_TROPHY2.y+33,30,10);
+  ctx.fillStyle='#333'; ctx.font='9px monospace'; ctx.textAlign='center';
+  ctx.fillText('TROPHY 2',OBJ_TROPHY2.x+20,OBJ_TROPHY2.y+54); ctx.textAlign='left';
+
+  // Plaque
+  glow(OBJ_PLAQUE, 80);
+  ctx.fillStyle=trophyRead.plaque?'#78909c':'#b8860b';
+  ctx.fillRect(OBJ_PLAQUE.x, OBJ_PLAQUE.y, OBJ_PLAQUE.w, OBJ_PLAQUE.h);
+  ctx.strokeStyle='#ffd700'; ctx.lineWidth=2; ctx.strokeRect(OBJ_PLAQUE.x,OBJ_PLAQUE.y,OBJ_PLAQUE.w,OBJ_PLAQUE.h);
+  ctx.fillStyle='#ffd700'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
+  ctx.fillText('THE TIME SQUAD',OBJ_PLAQUE.x+OBJ_PLAQUE.w/2,OBJ_PLAQUE.y+20);
+  ctx.fillStyle='#fff'; ctx.font='10px monospace';
+  ctx.fillText('Heroes of Time',OBJ_PLAQUE.x+OBJ_PLAQUE.w/2,OBJ_PLAQUE.y+38);
+  ctx.textAlign='left';
+
+  // Ben standing to the right
+  dBen(620, 240);
+  ctx.fillStyle='#ffd700'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+  ctx.fillText('BEN', 640, 235); ctx.textAlign='left';
+
+  // HUD
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,250,26);
+  ctx.fillStyle='#ffd700'; ctx.font='bold 13px monospace';
+  ctx.fillText(`Hall of Honours — ${trophyCount}/3`, 14, 27);
+
+  dNathan(N.x, N.y);
+  dEric(E.x, E.y, true);
+}
+
+function dMission() {
+  dHQRoom();
+
+  // Mission board
+  glow(OBJ_MISSIONBOARD, 110);
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(OBJ_MISSIONBOARD.x,OBJ_MISSIONBOARD.y,OBJ_MISSIONBOARD.w,OBJ_MISSIONBOARD.h);
+  ctx.strokeStyle='#ff5722'; ctx.lineWidth=3; ctx.strokeRect(OBJ_MISSIONBOARD.x,OBJ_MISSIONBOARD.y,OBJ_MISSIONBOARD.w,OBJ_MISSIONBOARD.h);
+  ctx.fillStyle='#ff5722'; ctx.font='bold 13px monospace'; ctx.textAlign='center';
+  ctx.fillText('MISSION BOARD',OBJ_MISSIONBOARD.x+OBJ_MISSIONBOARD.w/2,OBJ_MISSIONBOARD.y+20);
+  ctx.fillStyle='#ff9800'; ctx.font='12px monospace';
+  ctx.fillText('!! URGENT !!',OBJ_MISSIONBOARD.x+OBJ_MISSIONBOARD.w/2,OBJ_MISSIONBOARD.y+42);
+  ctx.fillStyle='#ccc'; ctx.font='11px monospace';
+  ctx.fillText('THE LOST ISLE',OBJ_MISSIONBOARD.x+OBJ_MISSIONBOARD.w/2,OBJ_MISSIONBOARD.y+65);
+  ctx.fillText('STATUS: UNKNOWN',OBJ_MISSIONBOARD.x+OBJ_MISSIONBOARD.w/2,OBJ_MISSIONBOARD.y+85);
+  ctx.fillText('DANGER: HIGH',OBJ_MISSIONBOARD.x+OBJ_MISSIONBOARD.w/2,OBJ_MISSIONBOARD.y+105);
+
+  // Map on the board (simple island shape)
+  ctx.fillStyle='#1a3a1a'; ctx.beginPath();
+  ctx.ellipse(OBJ_MISSIONBOARD.x+80,OBJ_MISSIONBOARD.y+155,50,28,0.2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2a5a2a'; ctx.beginPath();
+  ctx.ellipse(OBJ_MISSIONBOARD.x+78,OBJ_MISSIONBOARD.y+152,42,22,0.2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#00e5ff'; ctx.font='10px monospace';
+  ctx.fillText('?', OBJ_MISSIONBOARD.x+76, OBJ_MISSIONBOARD.y+158);
+  ctx.textAlign='left';
+
+  // Ben
+  dBen(160, 240);
+  ctx.fillStyle='#ffd700'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+  ctx.fillText('BEN', 180, 235); ctx.textAlign='left';
+
+  // HUD
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,200,26);
+  ctx.fillStyle='#ff5722'; ctx.font='bold 13px monospace'; ctx.fillText('Mission Briefing Room',14,27);
+
+  dNathan(N.x, N.y);
+  dEric(E.x, E.y, true);
+}
+
+function dSeymour(x, y) {
+  // We reuse function name — need wrapper for scene draw
+}
+
+function dSeymourScene() {
+  // Airport background
+  ctx.fillStyle='#e8eaf6'; ctx.fillRect(0,0,800,600);
+  // Ceiling
+  ctx.fillStyle='#c5cae9'; ctx.fillRect(0,0,800,60);
+  // Fluorescent lights
+  for (let lx=100;lx<800;lx+=200) {
+    ctx.fillStyle='#fff'; ctx.fillRect(lx,10,100,18);
+    const lg=ctx.createRadialGradient(lx+50,28,5,lx+50,28,60);
+    lg.addColorStop(0,'rgba(255,255,255,0.3)'); lg.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle=lg; ctx.fillRect(lx,10,100,80);
+  }
+  // Floor
+  ctx.fillStyle='#9fa8da'; ctx.fillRect(0,420,800,180);
+  ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=2;
+  for (let x=0;x<800;x+=100) { ctx.beginPath(); ctx.moveTo(x,420); ctx.lineTo(x,600); ctx.stroke(); }
+  for (let y=440;y<600;y+=80) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(800,y); ctx.stroke(); }
+  // Wall
+  ctx.fillStyle='#e8eaf6'; ctx.fillRect(0,60,800,360);
+  ctx.strokeStyle='rgba(100,100,150,0.15)'; ctx.lineWidth=1;
+  for (let x=0;x<800;x+=40) { ctx.beginPath(); ctx.moveTo(x,60); ctx.lineTo(x,420); ctx.stroke(); }
+  // Departure board
+  ctx.fillStyle='#1a237e'; ctx.fillRect(100,80,600,90);
+  ctx.strokeStyle='#3949ab'; ctx.lineWidth=2; ctx.strokeRect(100,80,600,90);
+  ctx.fillStyle='#00e5ff'; ctx.font='bold 15px monospace'; ctx.textAlign='center';
+  ctx.fillText('DEPARTURES', 400, 105);
+  ctx.fillStyle='#ffd700'; ctx.font='13px monospace';
+  ctx.fillText('CHEAP GREMLIN AIRLINES  FL-13  →  LOST ISLE  ON TIME', 400, 130);
+  ctx.fillStyle='#ff5722'; ctx.font='11px monospace';
+  ctx.fillText('GATE 13  —  NOW BOARDING', 400, 153);
+  ctx.textAlign='left';
+  // Chairs
+  for (let cx=80;cx<700;cx+=80) {
+    ctx.fillStyle='#7986cb'; ctx.fillRect(cx,280,55,50);
+    ctx.fillStyle='#9fa8da'; ctx.fillRect(cx,240,55,42);
+  }
+
+  // Seymour standing
+  glow(OBJ_SEYMOUR, 100);
+  dSeymourSprite(OBJ_SEYMOUR.x, OBJ_SEYMOUR.y);
+  ctx.fillStyle='#ff5722'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
+  ctx.fillText('SEYMOUR', OBJ_SEYMOUR.x+18, OBJ_SEYMOUR.y-10); ctx.textAlign='left';
+
+  // HUD
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,180,26);
+  ctx.fillStyle='#00e5ff'; ctx.font='bold 13px monospace'; ctx.fillText('International Airport',14,27);
+
+  dNathan(N.x, N.y);
+  dEric(E.x, E.y, true);
+}
+
+// actual seymour sprite drawer
+function dSeymourSprite(x, y) {
+  ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(x+18,y+54,16,5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(x+1,y+46,16,9); ctx.fillRect(x+19,y+46,16,9);
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x+3,y+30,13,18); ctx.fillRect(x+20,y+30,13,18);
+  ctx.fillStyle='#455a64'; ctx.fillRect(x+1,y+16,34,16);
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x+1,y+16,8,16); ctx.fillRect(x+27,y+16,8,16);
+  ctx.fillStyle='#8d6e63'; ctx.fillRect(x+15,y+17,6,12);
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x-4,y+16,8,18); ctx.fillRect(x+32,y+16,8,18);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x-4,y+31,8,5); ctx.fillRect(x+32,y+31,8,5);
+  ctx.fillStyle='#ffcc80'; ctx.fillRect(x+14,y+12,8,6);
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.arc(x+18,y+10,13,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#90a4ae';
+  ctx.beginPath(); ctx.arc(x+18,y+4,13,Math.PI,0); ctx.fill();
+  ctx.fillRect(x+5,y-2,8,7); ctx.fillRect(x+23,y-2,8,7);
+  ctx.fillStyle='#fff'; ctx.fillRect(x+9,y+9,7,4); ctx.fillRect(x+22,y+9,7,4);
+  ctx.fillStyle='#333'; ctx.fillRect(x+11,y+10,3,3); ctx.fillRect(x+24,y+10,3,3);
+  ctx.fillStyle='#546e7a'; ctx.fillRect(x+9,y+6,7,2); ctx.fillRect(x+22,y+7,7,2);
+  ctx.strokeStyle='#5d4037'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(x+18,y+19,4,Math.PI+0.2,2*Math.PI-0.2); ctx.stroke();
+  // coffee cup
+  ctx.fillStyle='#795548'; ctx.fillRect(x+36,y+28,14,14);
+  ctx.fillStyle='#fff'; ctx.fillRect(x+38,y+30,10,10);
+  ctx.fillStyle='#4e342e'; ctx.fillRect(x+40,y+32,6,6);
+}
+
+function dPlaneBoard() {
+  // Airport exterior / runway
+  ctx.fillStyle='#b0bec5'; ctx.fillRect(0,0,800,600);
+  // Sky
+  ctx.fillStyle='#87ceeb'; ctx.fillRect(0,0,800,300);
+  // Clouds
+  for (let ci=0;ci<3;ci++) {
+    const cx=100+ci*260+Math.sin(ticker*0.005+ci)*20;
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    ctx.beginPath(); ctx.arc(cx,80,35,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+30,70,28,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx-25,75,25,0,Math.PI*2); ctx.fill();
+  }
+  // Runway
+  ctx.fillStyle='#37474f'; ctx.fillRect(0,300,800,120);
+  ctx.strokeStyle='#ffd740'; ctx.lineWidth=4; ctx.setLineDash([40,30]);
+  ctx.beginPath(); ctx.moveTo(0,360); ctx.lineTo(800,360); ctx.stroke();
+  ctx.setLineDash([]);
+  // Terminal building
+  ctx.fillStyle='#eceff1'; ctx.fillRect(550,180,240,200);
+  ctx.strokeStyle='#90a4ae'; ctx.lineWidth=2; ctx.strokeRect(550,180,240,200);
+  for (let wi=0;wi<4;wi++) {
+    ctx.fillStyle='#b3e5fc'; ctx.fillRect(560+wi*55,200,40,50);
+  }
+  ctx.fillStyle='#1a237e'; ctx.font='11px monospace'; ctx.textAlign='center';
+  ctx.fillText('TERMINAL',670,295); ctx.textAlign='left';
+
+  // The plane
+  const pw = OBJ_PLANE;
+  const bob = Math.sin(planeT*0.04)*3;
+  // Fuselage
+  ctx.fillStyle='#eceff1';
+  ctx.beginPath();
+  ctx.moveTo(pw.x, pw.y+pw.h/2+bob);
+  ctx.quadraticCurveTo(pw.x+40, pw.y+bob, pw.x+pw.w-20, pw.y+30+bob);
+  ctx.lineTo(pw.x+pw.w, pw.y+50+bob);
+  ctx.lineTo(pw.x+pw.w-20, pw.y+pw.h-20+bob);
+  ctx.quadraticCurveTo(pw.x+40, pw.y+pw.h+bob, pw.x, pw.y+pw.h/2+bob);
+  ctx.fill();
+  ctx.strokeStyle='#90a4ae'; ctx.lineWidth=2; ctx.stroke();
+  // Wing
+  ctx.fillStyle='#cfd8dc';
+  ctx.beginPath();
+  ctx.moveTo(pw.x+80, pw.y+pw.h/2+bob);
+  ctx.lineTo(pw.x+160, pw.y+pw.h/2+50+bob);
+  ctx.lineTo(pw.x+200, pw.y+pw.h/2+50+bob);
+  ctx.lineTo(pw.x+180, pw.y+pw.h/2+bob);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#90a4ae'; ctx.lineWidth=1; ctx.stroke();
+  // Tail fin
+  ctx.fillStyle='#cfd8dc';
+  ctx.beginPath();
+  ctx.moveTo(pw.x+pw.w-30, pw.y+40+bob);
+  ctx.lineTo(pw.x+pw.w, pw.y+bob);
+  ctx.lineTo(pw.x+pw.w, pw.y+60+bob);
+  ctx.closePath(); ctx.fill();
+  // Windows
+  for (let wi=0;wi<4;wi++) {
+    ctx.fillStyle='#b3e5fc'; ctx.fillRect(pw.x+50+wi*44, pw.y+pw.h/2-16+bob, 28, 22);
+    ctx.strokeStyle='#78909c'; ctx.lineWidth=1; ctx.strokeRect(pw.x+50+wi*44, pw.y+pw.h/2-16+bob, 28, 22);
+  }
+  // Engine
+  ctx.fillStyle='#90a4ae'; ctx.fillRect(pw.x+100, pw.y+pw.h/2+35+bob, 50,20);
+  ctx.fillStyle='#607d8b'; ctx.beginPath(); ctx.arc(pw.x+100,pw.y+pw.h/2+45+bob,10,0,Math.PI*2); ctx.fill();
+  // "CHEAP GREMLIN AIRLINES" on fuselage
+  ctx.fillStyle='#1a237e'; ctx.font='bold 9px monospace'; ctx.textAlign='center';
+  ctx.fillText('CHEAP GREMLIN AIRLINES',pw.x+pw.w/2-10, pw.y+pw.h/2+8+bob);
+  ctx.textAlign='left';
+
+  // Seymour already on plane (small figure in window)
+  ctx.fillStyle='#90a4ae'; ctx.font='10px monospace'; ctx.textAlign='center';
+  ctx.fillText('[Seymour already seated]', pw.x+pw.w/2-10, pw.y+pw.h+20+bob);
+  ctx.textAlign='left';
+
+  if (!OBJ_PLANE._done) glow({x:pw.x, y:pw.y+bob, w:pw.w, h:pw.h}, 120);
+
+  // HUD
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(8,8,200,26);
+  ctx.fillStyle='#87ceeb'; ctx.font='bold 13px monospace'; ctx.fillText('Airport — Gate 13',14,27);
+
+  dNathan(N.x, N.y);
+  dEric(E.x, E.y, true);
+}
+
+function dContinueScreen() {
+  ctx.fillStyle='#000011'; ctx.fillRect(0,0,800,600);
+  for (let i=0;i<70;i++) {
+    const sx=(i*137+50)%800, sy=(i*97+30)%580;
+    const bright=Math.sin(ticker*0.04+i)*0.4+0.6;
+    ctx.fillStyle=`rgba(255,255,255,${bright*0.7})`;
+    ctx.fillRect(sx,sy,1,1);
+  }
+  ctx.textAlign='center';
+  const pulse = (Math.sin(ticker*0.06)+1)*0.5;
+  ctx.shadowColor='#00e676'; ctx.shadowBlur=20+pulse*10;
+  ctx.fillStyle='#00e676'; ctx.font='bold 30px monospace';
+  ctx.fillText('End of Part 1', 400, 220);
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#ffd700'; ctx.font='18px monospace';
+  ctx.fillText('Up next: Part 2 — The Crash', 400, 275);
+  ctx.fillStyle='#aaa'; ctx.font='14px monospace';
+  ctx.fillText('The plane is in the air...', 400, 320);
+  ctx.fillText('but something is about to go VERY wrong.', 400, 345);
+  if (continueT > 60 && Math.floor(ticker/15)%2===0) {
+    ctx.fillStyle='#fff'; ctx.font='bold 17px monospace';
+    ctx.fillText('► Press E to continue to Part 2 ◄', 400, 430);
+  }
+  // draw plane flying across
+  const fx = (ticker*1.5) % 900 - 100;
+  const fy = 140 + Math.sin(ticker*0.03)*15;
+  ctx.fillStyle='#cfd8dc';
+  ctx.beginPath();
+  ctx.moveTo(fx,fy+12); ctx.quadraticCurveTo(fx+20,fy,fx+70,fy+8);
+  ctx.lineTo(fx+80,fy+14); ctx.lineTo(fx+70,fy+22);
+  ctx.quadraticCurveTo(fx+20,fy+28,fx,fy+12); ctx.fill();
+  // wing
+  ctx.beginPath(); ctx.moveTo(fx+25,fy+15); ctx.lineTo(fx+40,fy+35); ctx.lineTo(fx+55,fy+35); ctx.lineTo(fx+50,fy+15); ctx.closePath(); ctx.fill();
+  ctx.textAlign='left';
+}
+
+// ── DIALOGUE BOX ──────────────────────────────────────────────
+function dDialogue() {
+  if (!dlgActive) return;
+  ctx.fillStyle='rgba(0,0,0,0.92)'; ctx.fillRect(10,448,780,148);
+  ctx.strokeStyle='#7c4dff'; ctx.lineWidth=2; ctx.strokeRect(10,448,780,148);
+  ctx.fillStyle='#7c4dff'; ctx.fillRect(10,448,780,4);
+  ctx.fillStyle='#fff'; ctx.font='16px monospace';
+  const line = dlgLines[dlgPage]||'';
+  const words = line.split(' ');
+  let ly=480, lt='';
+  for (const w of words) {
+    const test=lt+(lt?' ':'')+w;
+    if (ctx.measureText(test).width>740) { ctx.fillText(lt,24,ly); ly+=24; lt=w; }
+    else lt=test;
+  }
+  if (lt) ctx.fillText(lt,24,ly);
+  ctx.fillStyle='#555'; ctx.font='12px monospace';
+  ctx.fillText(`${dlgPage+1}/${dlgLines.length}`, 24, 584);
+  if (Math.floor(ticker/12)%2===0) { ctx.fillStyle='#ffd700'; ctx.font='bold 12px monospace'; ctx.textAlign='right'; ctx.fillText('E / Space ▶',780,584); ctx.textAlign='left'; }
+}
+
+// ── CONTROLS REMINDER ─────────────────────────────────────────
+function dControls() {
+  if (scene==='title'||scene==='continue') return;
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(8,8,238,26);
+  ctx.fillStyle='#555'; ctx.font='12px monospace';
+  ctx.fillText('Move: WASD/Arrows  |  Act: E', 14, 27);
+}
+
+// ── MUSIC ─────────────────────────────────────────────────────
+(function() {
+  let ac;
+  try { ac = new (window.AudioContext||window.webkitAudioContext)(); } catch(e) { return; }
+  function note(f, t, d, type, v) {
+    const o=ac.createOscillator(), g=ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.type=type||'square'; o.frequency.value=f;
+    g.gain.setValueAtTime(v||0.04,ac.currentTime+t);
+    g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+t+d);
+    o.start(ac.currentTime+t); o.stop(ac.currentTime+t+d+0.01);
+  }
+  const B=0.17;
+  // Slightly different melody for ch3 — more adventurous
+  const mel=[
+    [392,0],[440,1],[494,2],[523,3],[587,4],[523,5],[494,6],[523,7],
+    [587,8],[659,9],[698,10],[659,11],[587,12],[523,13],[494,14],[440,15],
+    [494,16],[523,17],[587,18],[659,19],[784,20],[740,21],[698,22],[659,23],
+    [587,24],[659,25],[587,26],[523,27],[494,28],[440,29],[415,30],[392,31],
+  ];
+  const bass=[196,196,220,196,220,247,220,196];
+  function loop() {
+    mel.forEach(([f,b])=>note(f,b*B,B*0.65,'square',0.033));
+    bass.forEach((f,i)=>note(f,i*B*4,B*3.3,'triangle',0.05));
+    setTimeout(loop,32*B*1000*0.96);
+  }
+  const go=()=>{ if(ac.state==='suspended') ac.resume(); loop(); };
+  document.addEventListener('keydown',go,{once:true});
+  canvas.addEventListener('touchstart',go,{once:true,passive:true});
+})();
+
+// ── OVERRIDE draw() to call right scene draw ──────────────────
+// (fix: dSeymour was overloaded — using dSeymourScene instead)
+
+// ── GAME LOOP ─────────────────────────────────────────────────
+(function loop() {
+  ticker++;
+  if (sceneLabel > 0) sceneLabel--;
+
+  if (dlgActive) {
+    const ed = keys['e']||keys['E']||keys[' '];
+    if (ed && !eDown) advanceDlg();
+    eDown = ed;
+  } else {
+    eDown = false;
+    if (scene === 'title')       uTitle();
+    if (scene === 'hq_train')    uTrain();
+    if (scene === 'hq_ceremony') uCeremony();
+    if (scene === 'mission')     uMission();
+    if (scene === 'seymour')     uSeymour();
+    if (scene === 'plane_board') uPlaneBoard();
+    if (scene === 'continue')    uContinue();
+  }
+
+  ctx.clearRect(0,0,800,600);
+  ctx.textAlign='left';
+
+  if (scene === 'title')       dTitle();
+  if (scene === 'hq_train')    dTrain();
+  if (scene === 'hq_ceremony') dCeremony();
+  if (scene === 'mission')     dMission();
+  if (scene === 'seymour')     dSeymourScene();
+  if (scene === 'plane_board') dPlaneBoard();
+  if (scene === 'continue')    dContinueScreen();
+
+  dDialogue();
+  dControls();
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
